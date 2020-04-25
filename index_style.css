@@ -25,6 +25,7 @@ body {
 }
 .heading > img {
     width: 50%;
+    max-width: 50%;
     position: relative;
     top: -7rem;
 }
