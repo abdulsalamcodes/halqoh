@@ -24,10 +24,8 @@ body {
     padding-bottom: 10px;
 }
 .heading > img {
-    width: 50%;
+    width: 30%;
     max-width: 50%;
-    position: relative;
-    top: -7rem;
 }
 .btn.start_btn {
     background-color: hsl(211, 56%, 9%);
