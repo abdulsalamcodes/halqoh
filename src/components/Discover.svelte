@@ -69,6 +69,8 @@
     } finally { loading = false }
   }
 
+  let countFetched = $state(false)
+  
   async function fetchCount() {
     const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&select=id`
     const response = await fetch(url, {
@@ -77,6 +79,7 @@
     if (response.ok) {
       const data = await response.json()
       totalCount = data.length
+      countFetched = true
       console.log('Total count:', totalCount)
     }
   }
@@ -147,8 +150,9 @@
   }
 
   function hasMore() {
-    if (loading || loadingMore || totalCount === 0) return false
-    return halqahs.length < totalCount
+    if (loadingMore) return false
+    if (countFetched && totalCount > 0) return halqahs.length < totalCount
+    return halqahs.length >= PAGE_SIZE
   }
 
   function getPlatformIcon(platform) {
@@ -228,8 +232,7 @@
   )
 
   onMount(() => {
-    fetchHalqahs(true)
-    fetchCount()
+    Promise.all([fetchHalqahs(true), fetchCount()])
     
     // Load reminder settings
     try {
