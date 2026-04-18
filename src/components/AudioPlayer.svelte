@@ -28,7 +28,7 @@
     </button>
     <img src="/images/Halqoh Logo.png" alt="Halqoh" class="logo" />
     <div class="nav-actions">
-      <a href="/discover.html" class="btn btn-ghost">Discover</a>
+      <a href="/" class="btn btn-ghost">Discover</a>
     </div>
   </nav>
 
@@ -110,7 +110,7 @@
   </main>
 
   <footer class="footer">
-    <p>All Rights Reserved. Halqoh Vibes &copy;2020</p>
+    <p>All Rights Reserved. Halqah Directories &copy;2020</p>
   </footer>
 </div>
 

@@ -429,7 +429,7 @@
           <div class="about-logo-wrap">
             <img src="/images/Halqoh Logo.png" alt="Halqoh" class="about-logo-img" />
           </div>
-          <h2>Halqoh Vibes</h2>
+          <h2>Halqah Directories</h2>
           <p class="about-subtitle">Discover Islamic Knowledge Sessions</p>
         </div>
         
@@ -479,7 +479,7 @@
 
 <style>
   :root { --bg: #0c1b2b; --primary: #ff8a04; }
-  .discover { min-height: 100vh; background: var(--bg); color: #fff; font-family: system-ui, sans-serif; padding-bottom: 70px; }
+  .discover { min-height: 100vh; background: var(--bg); color: #fff; font-family: 'Inter', system-ui, sans-serif; padding-bottom: 70px; }
   
   .navbar { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(12,27,43,0.95); position: sticky; top: 0; z-index: 100; }
   .logo { height: 32px; }

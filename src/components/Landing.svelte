@@ -46,7 +46,7 @@
       </p>
       <div class="hero-actions">
         <button class="btn btn-primary btn-lg" onclick={goToPlayer}>Start Learning</button>
-        <a href="/discover.html" class="btn btn-outline">Explore</a>
+        <a href="/" class="btn btn-outline">Explore</a>
       </div>
     </div>
     <div class="hero-visual">
@@ -79,7 +79,7 @@
   <footer class="footer">
     <div class="footer-content">
       <img src="/images/Halqoh Logo.png" alt="Halqoh" class="logo-sm" />
-      <p>All Rights Reserved. Halqoh Vibes &copy;2020</p>
+      <p>All Rights Reserved. Halqah Directories &copy;2020</p>
     </div>
   </footer>
 </div>

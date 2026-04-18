@@ -6,7 +6,7 @@ export default defineConfig({
   base: '/',
   envPrefix: 'VITE_',
   build: {
-    target: 'esnext',
+    target: ['es2020', 'safari15'],
     rollupOptions: {
       input: {
         index: 'index.html',

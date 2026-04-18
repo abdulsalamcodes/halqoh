@@ -92,7 +92,7 @@
         <div class="empty-icon">&#128218;</div>
         <h3>No saved sessions</h3>
         <p>Save sessions to see them here</p>
-        <a href="/discover.html" class="btn">Discover Sessions</a>
+        <a href="/" class="btn">Discover Sessions</a>
       </div>
     {:else}
       <div class="cards">
@@ -137,7 +137,7 @@
 
 <style>
   :root { --bg: #0c1b2b; --primary: #ff8a04; }
-  .mysessions { min-height: 100vh; background: var(--bg); color: #fff; font-family: system-ui, sans-serif; padding-bottom: 70px; }
+  .mysessions { min-height: 100vh; background: var(--bg); color: #fff; font-family: 'Inter', system-ui, sans-serif; padding-bottom: 70px; }
   
   .navbar { display: flex; align-items: center; padding: 0.75rem 1rem; background: rgba(12,27,43,0.95); }
   .logo { height: 32px; }
