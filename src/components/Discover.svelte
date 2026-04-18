@@ -30,43 +30,37 @@
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
   const API_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
 
   console.log('API_KEY:', API_KEY ? 'loaded' : 'missing')
+  console.log('SUPABASE_URL:', SUPABASE_URL)
 
   async function fetchHalqahs(reset = false) {
     try {
-      loading = true
-      error = null
-      
       if (reset) {
         currentPage = 1
         halqahs = []
-        console.log('Fetching total count...')
-        const countRes = await fetch('https://nmizrlmjlurpialcjgex.supabase.co/rest/v1/halqahs?status=eq.published&select=id', {
-          headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY }
-        })
-        if (countRes.ok) {
-          const countData = await countRes.json()
-          totalCount = countData.length
-          console.log('Total count:', totalCount)
-        }
       }
+      loading = true
+      error = null
       
-      console.log('Fetching halqahs, page:', currentPage)
       const offset = (currentPage - 1) * PAGE_SIZE
-      const response = await fetch(`https://nmizrlmjlurpialcjgex.supabase.co/rest/v1/halqahs?status=eq.published&limit=${PAGE_SIZE}&offset=${offset}&order=created_at.desc`, {
+      const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&limit=${PAGE_SIZE}&offset=${offset}&order=created_at.desc`
+      console.log('Fetching halqahs:', url)
+      const response = await fetch(url, {
         headers: { 
           'apikey': API_KEY, 
           'Authorization': 'Bearer ' + API_KEY
         }
       })
-      console.log('Response status:', response.status)
       if (!response.ok) {
         error = 'HTTP ' + response.status
+        loading = false
         return
       }
+      
       const data = await response.json()
-      console.log('Data received:', data.length, 'items')
+      console.log('Data received:', data.length)
       halqahs = reset ? data : [...halqahs, ...data]
       if (reset) loadSavedSessions()
     } catch (e) { 
@@ -75,8 +69,20 @@
     } finally { loading = false }
   }
 
+  async function fetchCount() {
+    const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&select=id`
+    const response = await fetch(url, {
+      headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY }
+    })
+    if (response.ok) {
+      const data = await response.json()
+      totalCount = data.length
+      console.log('Total count:', totalCount)
+    }
+  }
+
   async function loadMore() {
-    if (loadingMore || halqahs.length >= totalCount) return
+    if (loadingMore || halqahs.length < PAGE_SIZE) return
     currentPage++
     loadingMore = true
     await fetchHalqahs(false)
@@ -142,9 +148,7 @@
 
   function hasMore() {
     if (loading || loadingMore || totalCount === 0) return false
-    const more = halqahs.length < totalCount
-    console.log('hasMore:', more, 'loaded:', halqahs.length, 'total:', totalCount)
-    return more
+    return halqahs.length < totalCount
   }
 
   function getPlatformIcon(platform) {
@@ -225,6 +229,7 @@
 
   onMount(() => {
     fetchHalqahs(true)
+    fetchCount()
     
     // Load reminder settings
     try {

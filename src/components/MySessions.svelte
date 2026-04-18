@@ -9,6 +9,7 @@
   let error = $state(null)
 
   const API_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
 
   const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
   const dayOptions = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -25,7 +26,7 @@
         return
       }
 
-      const response = await fetch('https://nmizrlmjlurpialcjgex.supabase.co/rest/v1/halqahs?status=eq.published', {
+      const response = await fetch(`${SUPABASE_URL}/rest/v1/halqahs?status=eq.published`, {
         headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY }
       })
       const all = await response.json()
