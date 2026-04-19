@@ -1,3 +1,4 @@
+import './polyfills'
 import { mount } from 'svelte'
 import Discover from './components/Discover.svelte'
 import './app.css'

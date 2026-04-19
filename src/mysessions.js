@@ -1,3 +1,4 @@
+import './polyfills'
 import { mount } from 'svelte'
 import MySessions from './components/MySessions.svelte'
 import './app.css'
