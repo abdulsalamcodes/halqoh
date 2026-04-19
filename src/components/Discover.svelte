@@ -17,75 +17,74 @@
   let selectedSpeaker = $state('')
   let selectedSession = $state(null)
   let showAbout = $state(false)
-  let isLive = $state(false)
-  let filtersCollapsed = $state(true)
+  let filtersOpen = $state(false)
   let notificationsEnabled = $state(false)
-  
   let savedSessions = $state([])
   let sessionReminders = $state({})
 
   const categories = ['All Categories', 'Quran Studies', 'Hadith Explanations', 'Islamic Law', 'Spirituality', 'Language']
-  const dayOptions = ['All Days', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-  const languages = ['All Languages', 'yoruba', 'english', 'arabic', 'hausa', 'french']
-  const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const dayOptions  = ['All Days', 'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  const languages   = ['All Languages', 'yoruba', 'english', 'arabic', 'hausa', 'french']
+  const days        = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-  const API_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+  const CAT_CHIP = {
+    'All Categories': 'All', 'Quran Studies': 'Quran',
+    'Hadith Explanations': 'Hadith', 'Islamic Law': 'Fiqh',
+    'Spirituality': 'Spirituality', 'Language': 'Language',
+  }
+  const DAY_CHIP = {
+    'All Days': 'Any', 'Sunday': 'Sun', 'Monday': 'Mon', 'Tuesday': 'Tue',
+    'Wednesday': 'Wed', 'Thursday': 'Thu', 'Friday': 'Fri', 'Saturday': 'Sat',
+  }
+  const LANG_CHIP = {
+    'All Languages': 'Any', 'yoruba': 'Yoruba', 'english': 'English',
+    'arabic': 'Arabic', 'hausa': 'Hausa', 'french': 'French',
+  }
+  const CAT_COLOR = {
+    'Quran Studies': '#4ADE80', 'Hadith Explanations': '#60A5FA',
+    'Islamic Law': '#A78BFA',   'Spirituality': '#F59E0B',
+    'Language': '#F472B6',      'General': '#94A3B8',
+  }
+
+  function catColor(cat) { return CAT_COLOR[cat] || CAT_COLOR['General'] }
+
+  const API_KEY    = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
-
-  console.log('API_KEY:', API_KEY ? 'loaded' : 'missing')
-  console.log('SUPABASE_URL:', SUPABASE_URL)
 
   async function fetchHalqahs(reset = false) {
     try {
-      if (reset) {
-        currentPage = 1
-        halqahs = []
-      }
+      if (reset) { currentPage = 1; halqahs = [] }
       loading = true
       error = null
-      
       const offset = (currentPage - 1) * PAGE_SIZE
       const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&limit=${PAGE_SIZE}&offset=${offset}&order=created_at.desc`
-      console.log('Fetching halqahs:', url)
       const response = await fetch(url, {
-        headers: { 
-          'apikey': API_KEY, 
-          'Authorization': 'Bearer ' + API_KEY
-        }
+        headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY },
       })
-      if (!response.ok) {
-        error = 'HTTP ' + response.status
-        loading = false
-        return
-      }
-      
+      if (!response.ok) { error = 'Could not load sessions (HTTP ' + response.status + ')'; loading = false; return }
       const data = await response.json()
-      console.log('Data received:', data.length)
       halqahs = reset ? data : [...halqahs, ...data]
       if (reset) loadSavedSessions()
-    } catch (e) { 
+    } catch (e) {
       console.error('Fetch error:', e)
-      error = e.message 
+      error = e.message
     } finally { loading = false }
   }
 
   let countFetched = $state(false)
-  
+
   async function fetchCount() {
     try {
       const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&select=id`
       const response = await fetch(url, {
-        headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY }
+        headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY },
       })
       if (response.ok) {
         const data = await response.json()
         totalCount = data.length
         countFetched = true
-        console.log('Total count:', totalCount)
       }
-    } catch (e) {
-      console.error('fetchCount error:', e)
-    }
+    } catch (e) { console.error('fetchCount error:', e) }
   }
 
   async function loadMore() {
@@ -103,10 +102,12 @@
     } catch { savedSessions = [] }
   }
 
-  function toggleSave(halqah) {
-    const isSaved = savedSessions.includes(halqah.id)
-    if (isSaved) savedSessions = savedSessions.filter(id => id !== halqah.id)
-    else savedSessions = [...savedSessions, halqah.id]
+  function toggleSave(halqah, e) {
+    if (e) e.stopPropagation()
+    const already = savedSessions.includes(halqah.id)
+    savedSessions = already
+      ? savedSessions.filter(id => id !== halqah.id)
+      : [...savedSessions, halqah.id]
     localStorage.setItem('savedSessions', JSON.stringify(savedSessions))
   }
 
@@ -114,8 +115,7 @@
 
   function getCategoryName(cat) {
     if (!cat) return 'General'
-    try { return JSON.parse(cat).name || 'General' }
-    catch { return 'General' }
+    try { return JSON.parse(cat).name || 'General' } catch { return 'General' }
   }
 
   function getDayIndex(day) { return dayOptions.indexOf(day) }
@@ -133,13 +133,9 @@
     })
   })
 
-  function getUniqueLecturers() {
-    return [...new Set(halqahs.map(h => h.lecturer).filter(Boolean))].sort()
-  }
-
   function getDays(sched) {
     if (!sched?.recurring?.days) return ''
-    return sched.recurring.days.map(d => days[d]).join(', ')
+    return sched.recurring.days.map(d => days[d]).join(' · ')
   }
 
   function getDaysFull(sched) {
@@ -148,8 +144,11 @@
   }
 
   function getTime(sched) {
-    if (!sched?.recurring) return ''
-    return sched.recurring.start_time + ' - ' + sched.recurring.end_time
+    const start = sched?.recurring?.start_time
+    const end   = sched?.recurring?.end_time
+    if (!start && !end) return ''
+    if (!start || !end) return start || end
+    return start + ' – ' + end
   }
 
   function hasMore() {
@@ -158,20 +157,10 @@
     return halqahs.length >= PAGE_SIZE
   }
 
-  function getPlatformIcon(platform) {
-    const icons = { telegram: 'Telegram', youtube: 'YouTube', facebook: 'Facebook', zoom: 'Zoom', meet: 'Meet' }
-    return icons[platform?.toLowerCase()] || platform
-  }
-
   async function requestNotificationPermission() {
     if (!('Notification' in window)) return false
-    if (Notification.permission === 'granted') {
-      notificationsEnabled = true
-      return true
-    }
-    if (Notification.permission === 'denied') {
-      return false
-    }
+    if (Notification.permission === 'granted') { notificationsEnabled = true; return true }
+    if (Notification.permission === 'denied') return false
     const permission = await Notification.requestPermission()
     notificationsEnabled = permission === 'granted'
     return notificationsEnabled
@@ -181,43 +170,28 @@
     const current = sessionReminders[halqah.id] || false
     sessionReminders = { ...sessionReminders, [halqah.id]: !current }
     localStorage.setItem('sessionReminders', JSON.stringify(sessionReminders))
-
     if (!current && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-      scheduleNotification(halqah)
+      console.log('Reminder scheduled for:', halqah.title)
     }
   }
 
-  function hasReminder(id) {
-    return sessionReminders[id] || false
-  }
-
-  function scheduleNotification(halqah) {
-    // Just log for now - in production would use Service Worker for reliable notifications
-    console.log('Reminder scheduled for:', halqah.title)
-  }
+  function hasReminder(id) { return sessionReminders[id] || false }
 
   function checkReminders() {
     if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
-    
     const now = new Date()
     const currentDay = now.getDay()
     const currentTime = now.getHours() * 60 + now.getMinutes()
-    
     halqahs.forEach(halqah => {
       if (!sessionReminders[halqah.id]) return
       if (!halqah.schedule?.recurring?.days || !halqah.schedule?.recurring?.start_time) return
-      
-      const dayIndex = halqah.schedule.recurring.days.indexOf(currentDay)
-      if (dayIndex === -1) return
-      
-      const [startH, startM] = halqah.schedule.recurring.start_time.split(':').map(Number)
-      const startTime = startH * 60 + startM
-      
-      // Notify 15 minutes before
-      if (currentTime >= startTime - 15 && currentTime < startTime - 14) {
+      if (halqah.schedule.recurring.days.indexOf(currentDay) === -1) return
+      const [h, m] = halqah.schedule.recurring.start_time.split(':').map(Number)
+      const start = h * 60 + m
+      if (currentTime >= start - 15 && currentTime < start - 14) {
         new Notification('Session Starting Soon', {
           body: `${halqah.title} starts in 15 minutes`,
-          icon: '/images/Halqoh Logo.png'
+          icon: '/images/Halqoh Logo.png',
         })
       }
     })
@@ -231,191 +205,351 @@
   }
 
   let hasActiveFilters = $derived.by(() =>
-    selectedCategory !== 'All Categories' || selectedDay !== 'All Days' || selectedLanguage !== 'All Languages' || selectedSpeaker
+    selectedCategory !== 'All Categories' ||
+    selectedDay !== 'All Days' ||
+    selectedLanguage !== 'All Languages' ||
+    selectedSpeaker !== ''
   )
 
   onMount(() => {
     Promise.all([fetchHalqahs(true), fetchCount()]).catch(e => console.error('onMount fetch error:', e))
-    
-    // Load reminder settings
     try {
       const saved = localStorage.getItem('sessionReminders')
       sessionReminders = saved ? JSON.parse(saved) : {}
     } catch {}
-    
-    // Load notification permission
-    if ('Notification' in window) {
-      notificationsEnabled = Notification.permission === 'granted'
-    }
-    
-    // Check reminders every minute
+    if ('Notification' in window) notificationsEnabled = Notification.permission === 'granted'
     checkReminders()
     const interval = setInterval(checkReminders, 60000)
     return () => clearInterval(interval)
   })
 </script>
 
-<div class="discover">
+<!-- ─── SHELL ─────────────────────────────────────────────── -->
+<div class="app">
+
+  <!-- Ambient background orbs -->
+  <div class="bg-orbs" aria-hidden="true">
+    <div class="orb orb-gold"></div>
+    <div class="orb orb-sage"></div>
+  </div>
+
+  <!-- ── NAV ── -->
   <nav class="navbar">
-    <img src="/images/Halqoh Logo.png" alt="Halqoh" class="logo" />
+    <div class="brand">
+      <img src="/images/Halqoh Logo.png" alt="Halqah" class="logo" />
+      <span class="brand-name">Halqah</span>
+    </div>
     <div class="nav-right">
-      <button class="text-btn" onclick={() => showAbout = true}>About</button>
-      <a href="/mysessions.html" class="saved-btn">
+      <button class="icon-btn" onclick={() => showAbout = true} aria-label="About">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 16v-4M12 8h.01"/>
+        </svg>
+      </button>
+      <a href="/mysessions.html" class="icon-btn" aria-label="My saved sessions">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z"/>
         </svg>
         {#if savedSessions.length > 0}
-          <span class="badge">{savedSessions.length}</span>
+          <span class="nav-badge">{savedSessions.length}</span>
         {/if}
       </a>
     </div>
   </nav>
 
+  <!-- ── HERO ── -->
   <header class="hero">
-    <h1>Discover</h1>
-    <p>Find knowledge sessions</p>
+    <p class="hero-eyebrow">السلام عليكم</p>
+    <h1 class="hero-title"><em>Discover</em> Sessions</h1>
+    <p class="hero-sub">Islamic knowledge circles, found for you</p>
   </header>
 
-  <div class="search-row">
-    <div class="search-bar">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-      <input type="text" placeholder="Search..." bind:value={searchQuery} />
-      {#if searchQuery}<button class="clear" onclick={() => searchQuery = ''}>×</button>{/if}
+  <!-- ── SEARCH + FILTER TOGGLE ── -->
+  <div class="search-wrap">
+    <div class="search-field">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+      </svg>
+      <input
+        type="search"
+        placeholder="Search sessions or teachers…"
+        bind:value={searchQuery}
+        autocomplete="off"
+        autocorrect="off"
+        spellcheck="false"
+      />
+      {#if searchQuery}
+        <button class="search-clear" onclick={() => searchQuery = ''} aria-label="Clear search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      {/if}
     </div>
-    <button class="filter-btn" class:active={!filtersCollapsed || hasActiveFilters} onclick={() => filtersCollapsed = !filtersCollapsed}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21h16M4 10h16M4 3h16M4 14h16"/></svg>
-      Filters
-      {#if hasActiveFilters}<span class="dot"></span>{/if}
+    <button
+      class="filter-toggle"
+      class:open={filtersOpen}
+      class:active={hasActiveFilters}
+      onclick={() => filtersOpen = !filtersOpen}
+      aria-label="Toggle filters"
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M3 6h18M7 12h10M11 18h2"/>
+      </svg>
+      {#if hasActiveFilters}
+        <span class="filter-dot"></span>
+      {/if}
     </button>
   </div>
 
-  {#if !filtersCollapsed}
-    <div class="filters">
-      <select bind:value={selectedCategory}>
-        {#each categories as cat}<option value={cat}>{cat}</option>{/each}
-      </select>
-      <select bind:value={selectedDay}>
-        {#each dayOptions as day}<option value={day}>{day}</option>{/each}
-      </select>
-      <select bind:value={selectedLanguage}>
-        {#each languages as lang}<option value={lang}>{lang}</option>{/each}
-      </select>
-      <select bind:value={selectedSpeaker}>
-        <option value="">All Speakers</option>
-        {#each getUniqueLecturers() as lecturer}
-          <option value={lecturer}>{lecturer.length > 20 ? lecturer.slice(0, 20) + '...' : lecturer}</option>
-        {/each}
-      </select>
-      {#if hasActiveFilters}<button class="clear-btn" onclick={clearFilters}>Clear</button>{/if}
-    </div>
-    {#if !loading && halqahs.length > 0}
-      <div class="results-count">
-        {hasActiveFilters ? `Showing ${filteredHalqahs.length} of ${halqahs.length}` : `${halqahs.length} sessions available`}
+  <!-- ── FILTER PANEL (collapsible) ── -->
+  {#if filtersOpen}
+    <div class="filter-panel">
+      <div class="filter-group">
+        <span class="filter-label">Category</span>
+        <div class="chips-row" role="group">
+          {#each categories as cat}
+            <button class="chip" class:active={selectedCategory === cat}
+              onclick={() => selectedCategory = cat}>{CAT_CHIP[cat] || cat}</button>
+          {/each}
+        </div>
       </div>
-    {/if}
+      <div class="filter-group">
+        <span class="filter-label">Day</span>
+        <div class="chips-row" role="group">
+          {#each dayOptions as day}
+            <button class="chip" class:active={selectedDay === day}
+              onclick={() => selectedDay = day}>{DAY_CHIP[day] || day}</button>
+          {/each}
+        </div>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Language</span>
+        <div class="chips-row" role="group">
+          {#each languages as lang}
+            <button class="chip" class:active={selectedLanguage === lang}
+              onclick={() => selectedLanguage = lang}>{LANG_CHIP[lang] || lang}</button>
+          {/each}
+        </div>
+      </div>
+      {#if hasActiveFilters}
+        <button class="clear-all" onclick={() => { clearFilters(); filtersOpen = false }}>✕ Clear all</button>
+      {/if}
+    </div>
   {/if}
 
+  <!-- ── CONTENT ── -->
   <main class="content">
+    {#if hasActiveFilters && !loading}
+      <p class="results-meta">{filteredHalqahs.length} of {halqahs.length} sessions</p>
+    {/if}
+
     {#if loading && halqahs.length === 0}
-      <div class="state"><div class="spinner"></div><p>Loading...</p></div>
-    {:else if error}
-      <div class="state"><p>{error}</p><button onclick={fetchHalqahs}>Retry</button></div>
-    {:else if filteredHalqahs.length === 0}
-      <div class="state"><p>No sessions found</p></div>
-    {:else}
+      <!-- Skeleton cards -->
       <div class="cards">
-        {#each filteredHalqahs as halqah}
-          <button class="card" onclick={() => selectedSession = halqah}>
-            <div class="card-img">&#128218;</div>
-            <div class="card-body">
-              <span class="tag">{getCategoryName(halqah.category)}</span>
-              <h3>{halqah.title}</h3>
-              <p class="lecturer">{halqah.lecturer}</p>
-              <p class="meta">{getDays(halqah.schedule)} · {getTime(halqah.schedule)}</p>
-            </div>
-          </button>
+        {#each {length: 6} as _, i}
+          <div class="card skeleton" style="--delay:{i * 80}ms">
+            <div class="skel skel-tag"></div>
+            <div class="skel skel-title"></div>
+            <div class="skel skel-sub"></div>
+            <div class="skel skel-meta"></div>
+          </div>
         {/each}
       </div>
+
+    {:else if error}
+      <div class="empty-state">
+        <p class="empty-icon">⚠</p>
+        <p class="empty-label">{error}</p>
+        <button class="cta-btn" onclick={() => fetchHalqahs(true)}>Try again</button>
+      </div>
+
+    {:else if filteredHalqahs.length === 0}
+      <div class="empty-state">
+        <p class="empty-icon">🔍</p>
+        <p class="empty-label">No sessions match your filters</p>
+        {#if hasActiveFilters}
+          <button class="cta-btn" onclick={clearFilters}>Clear filters</button>
+        {/if}
+      </div>
+
+    {:else}
+      <div class="cards">
+        {#each filteredHalqahs as halqah, i}
+          {@const cat = getCategoryName(halqah.category)}
+          {@const color = catColor(cat)}
+          <div
+            class="card"
+            style="--cat:{color}; --delay:{Math.min(i, 10) * 45}ms"
+            onclick={() => selectedSession = halqah}
+            role="button"
+            tabindex="0"
+            onkeydown={(e) => e.key === 'Enter' && (selectedSession = halqah)}
+          >
+            <div class="card-top">
+              <span class="cat-tag" style="--cat:{color}">{cat}</span>
+              <button
+                class="save-btn"
+                class:saved={isSaved(halqah.id)}
+                onclick={(e) => toggleSave(halqah, e)}
+                aria-label={isSaved(halqah.id) ? 'Unsave session' : 'Save session'}
+              >
+                <svg viewBox="0 0 24 24" fill={isSaved(halqah.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
+                  <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z"/>
+                </svg>
+              </button>
+            </div>
+            <h3 class="card-title">{halqah.title}</h3>
+            {#if halqah.lecturer}
+              <p class="card-lecturer">{halqah.lecturer}</p>
+            {/if}
+            <div class="card-meta">
+              {#if getDays(halqah.schedule)}
+                <span class="meta-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+                  </svg>
+                  {getDays(halqah.schedule)}
+                </span>
+              {/if}
+              {#if getTime(halqah.schedule)}
+                <span class="meta-chip">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+                  </svg>
+                  {getTime(halqah.schedule)}
+                </span>
+              {/if}
+              {#if halqah.language}
+                <span class="meta-chip lang">{halqah.language}</span>
+              {/if}
+            </div>
+          </div>
+        {/each}
+      </div>
+
       {#if loadingMore}
-        <div class="load-more-loading"><div class="spinner-small"></div>Loading...</div>
+        <div class="load-more-wrap">
+          <span class="dot-loader"><i></i><i></i><i></i></span>
+        </div>
       {:else if hasMore()}
-        <button class="load-more" onclick={() => loadMore()}>Load More</button>
+        <button class="load-more-btn" onclick={loadMore}>Load more sessions</button>
       {/if}
     {/if}
   </main>
 
-  <nav class="bottom-nav">
-    <a href="/" class="nav-link active">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+  <!-- ── BOTTOM NAV ── -->
+  <nav class="bottom-nav" aria-label="Main navigation">
+    <a href="/" class="bnav-item active" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+      </svg>
       <span>Discover</span>
     </a>
-    <a href="/mysessions.html" class="nav-link">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z"/></svg>
+    <a href="/mysessions.html" class="bnav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z"/>
+      </svg>
       <span>Saved</span>
+      {#if savedSessions.length > 0}
+        <span class="bnav-pip"></span>
+      {/if}
     </a>
-    <button class="nav-link" onclick={() => showAbout = true}>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
+    <button class="bnav-item" onclick={() => showAbout = true}>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>
+      </svg>
       <span>About</span>
     </button>
   </nav>
 
+  <!-- ── SESSION MODAL ── -->
   {#if selectedSession}
-    <div class="modal-overlay" onclick={() => selectedSession = null}>
-      <div class="modal" onclick={(e) => e.stopPropagation()}>
-        <button class="close" onclick={() => selectedSession = null}>×</button>
-        
-        <div class="modal-header">
-          <span class="tag">{getCategoryName(selectedSession.category)}</span>
-          <h2>{selectedSession.title}</h2>
-          <p class="lecturer">{selectedSession.lecturer}</p>
+    {@const cat  = getCategoryName(selectedSession.category)}
+    {@const color = catColor(cat)}
+    <div class="overlay" onclick={() => selectedSession = null} role="dialog" aria-modal="true" aria-label="Session details">
+      <div class="sheet" onclick={(e) => e.stopPropagation()}>
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <button class="sheet-close" onclick={() => selectedSession = null} aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+
+        <!-- Header -->
+        <div class="sheet-header" style="--cat:{color}">
+          <span class="cat-tag" style="--cat:{color}">{cat}</span>
+          <h2 class="sheet-title">{selectedSession.title}</h2>
+          {#if selectedSession.lecturer}
+            <p class="sheet-lecturer">{selectedSession.lecturer}</p>
+          {/if}
         </div>
-        
-        <div class="modal-body">
-          {#if selectedSession.summary}<p class="about">{selectedSession.summary}</p>{/if}
-          {#if selectedSession.about}<p class="about">{selectedSession.about}</p>{/if}
-          
-          <div class="details">
+
+        <!-- Body -->
+        <div class="sheet-body">
+          {#if selectedSession.summary || selectedSession.about}
+            <p class="sheet-summary">{selectedSession.summary || selectedSession.about}</p>
+          {/if}
+
+          <div class="detail-grid">
             <div class="detail-row">
-              <span class="label">Schedule</span>
-              <span>{getDaysFull(selectedSession.schedule)} · {getTime(selectedSession.schedule)}</span>
+              <span class="detail-label">Schedule</span>
+              <span class="detail-val">{getDaysFull(selectedSession.schedule) || '—'}</span>
             </div>
             <div class="detail-row">
-              <span class="label">Mode</span>
-              <span>{selectedSession.schedule?.mode || 'Online'}</span>
+              <span class="detail-label">Time</span>
+              <span class="detail-val">{getTime(selectedSession.schedule) || '—'}</span>
             </div>
             <div class="detail-row">
-              <span class="label">Language</span>
-              <span>{selectedSession.language}</span>
+              <span class="detail-label">Mode</span>
+              <span class="detail-val">{selectedSession.schedule?.mode || 'Online'}</span>
+            </div>
+            <div class="detail-row">
+              <span class="detail-label">Language</span>
+              <span class="detail-val" style="text-transform:capitalize">{selectedSession.language || '—'}</span>
             </div>
             {#if selectedSession.subcategory}
-            <div class="detail-row">
-              <span class="label">Topic</span>
-              <span>{selectedSession.subcategory}</span>
-            </div>
+              <div class="detail-row">
+                <span class="detail-label">Topic</span>
+                <span class="detail-val">{selectedSession.subcategory}</span>
+              </div>
             {/if}
           </div>
-          
-          {#if selectedSession.schedule?.onlineLinks}
-            <div class="links-section">
-              <h4>Join Links</h4>
-              <div class="links">
+
+          {#if selectedSession.schedule?.onlineLinks?.length}
+            <div class="join-section">
+              <p class="join-label">Join Links</p>
+              <div class="join-links">
                 {#each selectedSession.schedule.onlineLinks as link}
-                  <a href={link.link} target="_blank" class="link-btn">
-                    <span class="icon">{getPlatformIcon(link.platform)}</span>
-                    <span>Join {link.platform}</span>
+                  <a href={link.link} target="_blank" rel="noopener noreferrer" class="join-btn">
+                    <span class="join-platform">{link.platform}</span>
+                    <span>Join {link.platform} →</span>
                   </a>
                 {/each}
               </div>
             </div>
           {/if}
-          
-          <div class="actions">
-            <button class="btn {hasReminder(selectedSession.id) ? 'active' : ''}" onclick={() => requestNotificationPermission().then(() => toggleReminder(selectedSession))}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
-              {hasReminder(selectedSession.id) ? 'Reminder On' : 'Set Reminder'}
+
+          <div class="sheet-actions">
+            <button
+              class="action-btn secondary"
+              class:on={hasReminder(selectedSession.id)}
+              onclick={() => requestNotificationPermission().then(() => toggleReminder(selectedSession))}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/>
+              </svg>
+              {hasReminder(selectedSession.id) ? 'Reminder On' : 'Remind Me'}
             </button>
-            <button class="btn primary" onclick={() => toggleSave(selectedSession)}>
-              {isSaved(selectedSession.id) ? '✓ Saved' : '+ Save'}
+            <button
+              class="action-btn primary"
+              class:saved={isSaved(selectedSession.id)}
+              onclick={() => toggleSave(selectedSession)}
+            >
+              <svg viewBox="0 0 24 24" fill={isSaved(selectedSession.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
+                <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z"/>
+              </svg>
+              {isSaved(selectedSession.id) ? 'Saved ✓' : 'Save Session'}
             </button>
           </div>
         </div>
@@ -423,181 +557,779 @@
     </div>
   {/if}
 
+  <!-- ── ABOUT MODAL ── -->
   {#if showAbout}
-    <div class="modal-overlay" onclick={() => showAbout = null} role="dialog" aria-modal="true">
-      <div class="about-modal" onclick={(e) => e.stopPropagation()}>
-        <button class="close" onclick={() => showAbout = null}>×</button>
-        
+    <div class="overlay" onclick={() => showAbout = false} role="dialog" aria-modal="true" aria-label="About Halqah">
+      <div class="sheet" onclick={(e) => e.stopPropagation()}>
+        <div class="sheet-handle" aria-hidden="true"></div>
+        <button class="sheet-close" onclick={() => showAbout = false} aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+
         <div class="about-header">
-          <div class="about-logo-wrap">
-            <img src="/images/Halqoh Logo.png" alt="Halqoh" class="about-logo-img" />
+          <div class="about-logo-ring">
+            <img src="/images/Halqoh Logo.png" alt="Halqah" class="about-logo" />
           </div>
-          <h2>Halqah Directories</h2>
-          <p class="about-subtitle">Discover Islamic Knowledge Sessions</p>
+          <h2 class="about-title">Halqah Directories</h2>
+          <p class="about-sub">Discover Islamic Knowledge Sessions</p>
         </div>
-        
-        <div class="about-body">
-          <div class="about-card">
-            <div class="about-card-header">
-              <span class="about-card-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
-              </span>
-              <h3>What is Halqoh?</h3>
-            </div>
-            <p>A curated directory of authentic Islamic audio lectures (halqoh) compiled by seekers of knowledge for the Ummah. We make it easy to discover beneficial lectures from trusted scholars.</p>
-          </div>
 
+        <div class="sheet-body">
           <div class="about-card">
-            <div class="about-card-header">
-              <span class="about-card-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
-              </span>
+            <div class="about-card-icon">📖</div>
+            <div>
+              <h3>What is Halqah?</h3>
+              <p>A curated directory of authentic Islamic knowledge sessions compiled for the Ummah. We make it easy to discover beneficial gatherings from trusted scholars.</p>
+            </div>
+          </div>
+          <div class="about-card">
+            <div class="about-card-icon">🌙</div>
+            <div>
               <h3>Our Mission</h3>
+              <p>We ask Allah to accept this effort as <strong>ibadah</strong>. This is a free service with no ads, no subscriptions — only sincerity.</p>
             </div>
-            <p>We ask Allah to accept this effort as <strong>ibadah</strong> and a means of drawing closer to Him. This is a free service with no ads or subscriptions.</p>
           </div>
-
           <div class="about-card">
-            <div class="about-card-header">
-              <span class="about-card-icon">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a1.994 1.994 0 01-1.414-.586m0 0L11 14h4v4h-4z"/></svg>
-              </span>
+            <div class="about-card-icon">✉️</div>
+            <div>
               <h3>Get Involved</h3>
+              <p>Know a beneficial session? Reach out and we'll consider adding it to the directory.</p>
+              <a href="mailto:abooubaydah01@gmail.com" class="about-contact">Contact Us →</a>
             </div>
-            <p>Know of a beneficial lecture? We'd love to hear about it. Reach out and we'll consider adding it to the directory.</p>
-            <a href="mailto:abooubaydah01@gmail.com" class="about-contact-btn">
-              Contact Us
-            </a>
           </div>
-        </div>
 
-        <div class="about-footer">
-          <p>Made with care for the Ummah</p>
-          <p class="about-dua">May Allah grant us Jannah</p>
+          <div class="about-footer">
+            <p>Made with care for the Ummah</p>
+            <p class="dua">May Allah grant us Jannah</p>
+          </div>
         </div>
       </div>
     </div>
   {/if}
+
 </div>
 
+<!-- ─── STYLES ──────────────────────────────────────────────── -->
 <style>
-  :root { --bg: #0c1b2b; --primary: #ff8a04; }
-  .discover { min-height: 100vh; background: var(--bg); color: #fff; font-family: 'Inter', system-ui, sans-serif; padding-bottom: 70px; }
-  
-  .navbar { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(12,27,43,0.95); position: sticky; top: 0; z-index: 100; }
-  .logo { height: 32px; }
-  .nav-right { display: flex; align-items: center; gap: 0.5rem; }
-  .text-btn { padding: 0.5rem 0.75rem; color: #fff; text-decoration: none; font-size: 0.9rem; background: none; border: none; cursor: pointer; }
-  .saved-btn { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; background: rgba(255,255,255,0.1); border-radius: 10px; color: #fff; position: relative; text-decoration: none; }
-  .saved-btn svg { width: 20px; height: 20px; }
-  .badge { position: absolute; top: -4px; right: -4px; background: var(--primary); color: var(--bg); font-size: 0.6rem; font-weight: 700; min-width: 18px; height: 18px; border-radius: 9px; display: flex; align-items: center; justify-content: center; }
-  
-  .hero { padding: 1rem; }
-  .hero h1 { font-size: 1.5rem; margin: 0; }
-  .hero p { color: rgba(255,255,255,0.6); margin: 0.25rem 0 0; }
-  
-  .search-row { display: flex; gap: 0.5rem; padding: 0 1rem 1rem; }
-  .search-bar { flex: 1; display: flex; align-items: center; gap: 0.5rem; background: rgba(255,255,255,0.08); border-radius: 10px; padding: 0 0.75rem; min-height: 44px; }
-  .search-bar svg { width: 20px; height: 20px; opacity: 0.5; flex-shrink: 0; }
-  .search-bar input { flex: 1; background: none; border: none; color: #fff; font-size: 1rem; outline: none; }
-  .clear { background: none; border: none; color: #fff; font-size: 1.25rem; cursor: pointer; }
-  
-  .filter-btn { display: flex; align-items: center; gap: 0.35rem; padding: 0 0.75rem; background: rgba(255,255,255,0.1); border-radius: 10px; color: #fff; min-height: 44px; position: relative; cursor: pointer; border: none; font-size: 0.9rem; }
-  .filter-btn svg { width: 18px; height: 18px; }
-  .dot { position: absolute; top: 6px; right: 6px; width: 6px; height: 6px; background: var(--primary); border-radius: 50%; }
-  
-  .filters { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; padding: 0 1rem 1rem; }
-  .filters select { padding: 0.6rem; background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); border-radius: 8px; color: #fff; font-size: 0.9rem; }
-  .filters option { background: var(--bg); }
-  .clear-btn { grid-column: span 2; padding: 0.6rem; background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: var(--primary); cursor: pointer; }
-  
-  .results-count { padding: 0.5rem 1rem 1rem; font-size: 0.85rem; color: rgba(255,255,255,0.6); }
-  
-  .content { padding: 0 1rem; }
-  .state { text-align: center; padding: 3rem 1rem; color: rgba(255,255,255,0.6); }
-  .spinner { width: 32px; height: 32px; border: 3px solid rgba(255,255,255,0.1); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 1rem; }
-  .spinner-small { width: 16px; height: 16px; border: 2px solid rgba(255,255,255,0.1); border-top-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; }
-  .load-more-loading { display: flex; align-items: center; justify-content: center; gap: 0.5rem; padding: 0.875rem; color: rgba(255,255,255,0.6); font-size: 0.9rem; }
-  @keyframes spin { to { transform: rotate(360deg); } }
-  .state button { margin-top: 1rem; padding: 0.6rem 1.5rem; background: var(--primary); border: none; border-radius: 8px; color: var(--bg); cursor: pointer; }
-  
-  .cards { display: flex; flex-direction: column; gap: 0.5rem; }
-  .card { display: flex; gap: 0.75rem; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 0.75rem; cursor: pointer; text-align: left; color: #fff; width: 100%; }
-  .card-img { width: 50px; height: 50px; background: linear-gradient(135deg, #1a3a5c, var(--bg)); border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; flex-shrink: 0; }
-  .card-body { flex: 1; min-width: 0; }
-  .tag { display: inline-block; font-size: 0.6rem; padding: 0.15rem 0.4rem; background: rgba(255,138,0,15%); color: var(--primary); border-radius: 4px; }
-  .card-body h3 { font-size: 0.95rem; margin: 0.35rem 0 0.2rem; }
-  .lecturer { color: var(--primary); font-size: 0.8rem; margin: 0; }
-  .meta { font-size: 0.75rem; color: rgba(255,255,255,0.5); margin: 0.35rem 0 0; }
-  
-  .bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: rgba(12,27,43,0.98); border-top: 1px solid rgba(255,255,255,0.08); padding: 0.5rem 1rem; z-index: 100; }
-  .nav-link { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.2rem; padding: 0.4rem; color: rgba(255,255,255,0.6); text-decoration: none; font-size: 0.7rem; border-radius: 8px; border: none; background: none; cursor: pointer; }
-  .nav-link svg { width: 20px; height: 20px; }
-  .nav-link.active { color: var(--primary); }
-  
-  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.8); display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 1rem; }
-  .modal { background: var(--bg); width: 100%; max-width: 500px; border-radius: 16px; max-height: 85vh; overflow-y: auto; position: relative; }
-  .close { position: absolute; top: 1rem; right: 1rem; width: 32px; height: 32px; background: rgba(255,255,255,0.1); border: none; border-radius: 50%; color: #fff; font-size: 1.25rem; cursor: pointer; z-index: 10; }
-  .modal-header { padding: 1.5rem 1.5rem 0; }
-  .modal-body { padding: 0 1.5rem 1.5rem; }
-  .modal-header h2 { font-size: 1.35rem; margin: 0.5rem 0 0.25rem; }
-  .modal-header .lecturer { color: var(--primary); font-size: 1rem; margin: 0 0 0.5rem; }
-  .tagline { color: rgba(255,255,255,0.6); margin: 0 0 1rem; }
-  .about .card { display: block; padding: 1rem; margin-bottom: 0.75rem; }
-  .about .card h3 { font-size: 1rem; color: var(--primary); margin: 0 0 0.5rem; }
-  .about .card p { color: rgba(255,255,255,0.8); line-height: 1.5; margin-bottom: 0.5rem; font-size: 0.9rem; }
-  .about .card strong { color: var(--primary); }
-  .contact-btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.75rem 1.25rem; background: var(--primary); border-radius: 8px; color: var(--bg); text-decoration: none; font-weight: 600; margin-top: 0.5rem; }
-  
-  .about-modal { background: #0d1e2d; width: 100%; max-width: 560px; border-radius: 24px; max-height: 90vh; overflow-y: auto; position: relative; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); }
-  .about-header { padding: 2rem 1.5rem 1.25rem; text-align: center; background: linear-gradient(180deg, rgba(255,138,4,0.08) 0%, transparent 100%); border-radius: 24px 24px 0 0; }
-  .about-logo-wrap { width: 72px; height: 72px; margin: 0 auto 1rem; background: #fff; border-radius: 20px; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
-  .about-logo-img { width: 56px; height: 56px; object-fit: contain; border-radius: 16px; }
-  .about-header h2 { font-size: 1.75rem; margin: 0; font-weight: 700; letter-spacing: -0.5px; }
-  .about-subtitle { color: rgba(255,255,255,0.5); margin: 0.5rem 0 0; font-size: 0.95rem; }
-  .about-body { padding: 1.25rem 1.5rem; }
-  .about-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06); border-radius: 16px; padding: 1.25rem; margin-bottom: 1rem; }
-  .about-card:last-of-type { margin-bottom: 0; }
-  .about-card-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; }
-  .about-card-icon { width: 36px; height: 36px; min-width: 36px; background: linear-gradient(135deg, rgba(255,138,4,0.2), rgba(255,138,4,0.05)); border-radius: 10px; display: flex; align-items: center; justify-content: center; }
-  .about-card-icon svg { width: 18px; height: 18px; color: var(--primary); }
-  .about-card-header h3 { font-size: 1rem; margin: 0; font-weight: 600; color: #fff; }
-  .about-card p { color: rgba(255,255,255,0.7); line-height: 1.6; margin: 0; font-size: 0.9rem; }
-  .about-card strong { color: var(--primary); font-weight: 600; }
-  .about-contact-btn { display: block; width: 100%; padding: 0.875rem; background: var(--primary); border-radius: 12px; color: #0c1b2b; text-decoration: none; font-weight: 600; margin-top: 1rem; text-align: center; font-size: 0.95rem; box-sizing: border-box; }
-  .about-contact-btn:hover { background: #ff9d2e; }
-  .about-footer { text-align: center; padding: 1.5rem; border-top: 1px solid rgba(255,255,255,0.06); }
-  .about-footer p { margin: 0; color: rgba(255,255,255,0.4); font-size: 0.8rem; }
-  .about-dua { color: var(--primary); margin-top: 0.25rem; font-weight: 500; }
-  .about { color: rgba(255,255,255,0.8); line-height: 1.6; margin-bottom: 1rem; font-size: 0.95rem; }
-  
-  .details { background: rgba(255,255,255,0.03); border-radius: 10px; padding: 0.75rem 1rem; }
-  .detail-row { display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.08); }
+  /* ── Tokens ── */
+  :root {
+    --ink:      #07101C;
+    --ink-1:    #0C1827;
+    --gold:     #C8922A;
+    --gold-lt:  #E0B860;
+    --gold-dim: rgba(200,146,42,.12);
+    --sage:     #4BBFAD;
+    --cream:    #EDE5D8;
+    --c60:      rgba(237,229,216,.60);
+    --c30:      rgba(237,229,216,.30);
+    --c12:      rgba(237,229,216,.12);
+    --c06:      rgba(237,229,216,.06);
+    --border:   rgba(237,229,216,.08);
+    --bmd:      rgba(237,229,216,.14);
+    --r:        14px;
+    --rpill:    100px;
+  }
+
+  /* ── Shell ── */
+  .app {
+    min-height: 100vh;
+    background: var(--ink);
+    background-image:
+      radial-gradient(ellipse 70% 40% at 10% 5%,  rgba(200,146,42,.07) 0%, transparent 65%),
+      radial-gradient(ellipse 50% 50% at 90% 95%, rgba(75,191,173,.05) 0%, transparent 60%);
+    color: var(--cream);
+    font-family: 'Sora', system-ui, sans-serif;
+    padding-bottom: 6rem;
+    position: relative;
+    overflow-x: hidden;
+  }
+
+  /* ── Ambient orbs ── */
+  .bg-orbs { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+  .orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(80px);
+    opacity: .35;
+  }
+  .orb-gold  { width: 400px; height: 300px; top: -80px;  left: -100px; background: radial-gradient(circle, rgba(200,146,42,.5), transparent 70%); }
+  .orb-sage  { width: 350px; height: 350px; bottom: -60px; right: -80px; background: radial-gradient(circle, rgba(75,191,173,.4), transparent 70%); }
+
+  /* ── Navbar ── */
+  .navbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: .875rem 1.25rem;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(7,16,28,.88);
+    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(16px);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .brand { display: flex; align-items: center; gap: .625rem; }
+  .logo  { height: 28px; width: auto; }
+  .brand-name {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.1rem;
+    font-weight: 500;
+    letter-spacing: -.02em;
+  }
+
+  .nav-right { display: flex; align-items: center; gap: .5rem; }
+
+  .icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px; height: 38px;
+    border-radius: 10px;
+    background: var(--c06);
+    border: 1px solid var(--border);
+    color: var(--c60);
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    text-decoration: none;
+    position: relative;
+    flex-shrink: 0;
+  }
+  .icon-btn:hover  { background: var(--c12); color: var(--cream); }
+  .icon-btn svg    { width: 18px; height: 18px; }
+
+  .nav-badge {
+    position: absolute;
+    top: -4px; right: -4px;
+    background: var(--gold);
+    color: var(--ink);
+    font-size: .55rem;
+    font-weight: 700;
+    min-width: 16px; height: 16px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0 3px;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    padding: 2rem 1.25rem 1.25rem;
+    position: relative;
+  }
+  .hero::after {
+    content: '';
+    display: block;
+    width: 40px; height: 2px;
+    background: linear-gradient(90deg, var(--gold), transparent);
+    border-radius: 2px;
+    margin-top: 1rem;
+  }
+
+  .hero-eyebrow {
+    font-size: .8rem;
+    color: var(--gold);
+    opacity: .75;
+    margin-bottom: .35rem;
+    letter-spacing: .04em;
+  }
+  .hero-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: clamp(2rem, 8vw, 2.75rem);
+    font-weight: 500;
+    line-height: 1.1;
+    letter-spacing: -.03em;
+    margin-bottom: .4rem;
+  }
+  .hero-title em { font-style: italic; color: var(--gold-lt); }
+  .hero-sub { font-size: .88rem; color: var(--c60); line-height: 1.5; }
+
+  /* ── Search ── */
+  .search-wrap {
+    padding: 0 1.25rem .875rem;
+    display: flex;
+    gap: .5rem;
+    align-items: center;
+  }
+
+  .search-field {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    background: var(--c06);
+    border: 1.5px solid var(--border);
+    border-radius: 12px;
+    padding: 0 .875rem;
+    height: 46px;
+    transition: border-color .2s, background .2s;
+    min-width: 0;
+  }
+  .search-field:focus-within {
+    border-color: var(--gold);
+    background: rgba(200,146,42,.06);
+  }
+  .search-field > svg { width: 17px; height: 17px; color: var(--c30); flex-shrink: 0; transition: color .2s; }
+  .search-field:focus-within > svg { color: var(--gold); }
+
+  .search-field input {
+    flex: 1; min-width: 0;
+    background: none; border: none;
+    color: var(--cream);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .875rem;
+    outline: none;
+  }
+  .search-field input::placeholder { color: var(--c30); }
+
+  .search-clear {
+    background: none; border: none;
+    color: var(--c30); cursor: pointer;
+    display: flex; align-items: center;
+    padding: 0; transition: color .15s; flex-shrink: 0;
+  }
+  .search-clear:hover { color: var(--cream); }
+  .search-clear svg { width: 14px; height: 14px; }
+
+  /* ── Filter toggle button ── */
+  .filter-toggle {
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    width: 46px; height: 46px;
+    border-radius: 12px;
+    background: var(--c06);
+    border: 1.5px solid var(--border);
+    color: var(--c60);
+    cursor: pointer;
+    transition: all .15s;
+    position: relative;
+  }
+  .filter-toggle svg { width: 17px; height: 17px; }
+  .filter-toggle:hover  { background: var(--c12); color: var(--cream); border-color: var(--bmd); }
+  .filter-toggle.open   { background: var(--c12); color: var(--cream); border-color: var(--bmd); }
+  .filter-toggle.active { border-color: rgba(200,146,42,.4); color: var(--gold); background: var(--gold-dim); }
+
+  .filter-dot {
+    position: absolute; top: 7px; right: 7px;
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--gold);
+  }
+
+  /* ── Filter panel ── */
+  .filter-panel {
+    padding: 0 1.25rem .875rem;
+    display: flex; flex-direction: column; gap: .625rem;
+    animation: fadeUp .18s ease both;
+  }
+
+  .filter-group {
+    display: flex; flex-direction: column; gap: .35rem;
+  }
+
+  .filter-label {
+    font-size: .65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .07em;
+    color: var(--c30);
+    padding-left: .25rem;
+  }
+
+  .chips-row {
+    display: flex; gap: .3rem;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .chips-row::-webkit-scrollbar { display: none; }
+
+  .chip {
+    display: inline-flex; align-items: center;
+    white-space: nowrap;
+    padding: .28rem .65rem;
+    border-radius: var(--rpill);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .72rem; font-weight: 500;
+    border: 1.5px solid var(--bmd);
+    background: var(--c06); color: var(--c60);
+    cursor: pointer; transition: all .15s; flex-shrink: 0;
+  }
+  .chip:hover  { border-color: var(--c30); color: var(--cream); }
+  .chip.active { background: var(--gold); border-color: var(--gold); color: var(--ink); font-weight: 600; }
+
+  .clear-all {
+    align-self: flex-start;
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .72rem; color: var(--sage);
+    background: none; border: none; cursor: pointer;
+    padding: .15rem 0; opacity: .8; transition: opacity .15s;
+  }
+  .clear-all:hover { opacity: 1; }
+
+  /* ── Results meta ── */
+  .results-meta {
+    font-size: .75rem;
+    color: var(--c30);
+    padding: 0 0 .75rem;
+  }
+
+  /* ── Content ── */
+  .content { padding: 0 1.25rem; position: relative; z-index: 1; }
+
+  /* ── Cards ── */
+  .cards {
+    display: flex;
+    flex-direction: column;
+    gap: .625rem;
+  }
+
+  @media (min-width: 640px) {
+    .cards { display: grid; grid-template-columns: repeat(2, 1fr); gap: .75rem; }
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    gap: .45rem;
+    background: var(--c06);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--cat, var(--gold));
+    border-radius: var(--r);
+    padding: .875rem 1rem;
+    cursor: pointer;
+    text-align: left;
+    color: var(--cream);
+    position: relative;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform .2s cubic-bezier(.22,1,.36,1), box-shadow .2s, background .15s, border-color .15s;
+    animation: fadeUp .45s cubic-bezier(.22,1,.36,1) both;
+    animation-delay: var(--delay, 0ms);
+  }
+  .card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; height: 1px;
+    background: linear-gradient(90deg, var(--cat, var(--gold)), transparent 60%);
+    opacity: .35;
+  }
+  .card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,.35);
+    background: var(--c12);
+    border-color: var(--bmd);
+  }
+  .card:active { transform: translateY(0); }
+
+  /* ── Card top row ── */
+  .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; }
+
+  .cat-tag {
+    display: inline-flex;
+    align-items: center;
+    padding: .18rem .5rem;
+    border-radius: var(--rpill);
+    font-size: .62rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    /* fallback, then color-mix */
+    background: rgba(200,146,42,.13);
+    background: color-mix(in srgb, var(--cat, var(--gold)) 13%, transparent);
+    color: var(--cat, var(--gold));
+  }
+
+  .save-btn {
+    flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    width: 28px; height: 28px;
+    border-radius: 8px;
+    background: none; border: none;
+    color: var(--c30); cursor: pointer;
+    transition: color .15s, background .15s;
+    padding: 0;
+  }
+  .save-btn svg    { width: 15px; height: 15px; }
+  .save-btn:hover  { color: var(--gold); background: var(--gold-dim); }
+  .save-btn.saved  { color: var(--gold); }
+
+  /* ── Card body ── */
+  .card-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: .98rem;
+    font-weight: 500;
+    line-height: 1.35;
+    letter-spacing: -.01em;
+    color: var(--cream);
+    margin: 0;
+  }
+  .card-lecturer { font-size: .8rem; color: var(--sage); margin: 0; }
+
+  .card-meta { display: flex; flex-wrap: wrap; gap: .35rem .6rem; }
+  .meta-chip {
+    display: inline-flex; align-items: center; gap: .25rem;
+    font-size: .7rem; color: var(--c30);
+  }
+  .meta-chip svg { width: 11px; height: 11px; flex-shrink: 0; }
+  .meta-chip.lang {
+    background: var(--c06);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: .1rem .35rem;
+    text-transform: capitalize;
+  }
+
+  /* ── Skeleton ── */
+  .card.skeleton { border-left-color: var(--border); pointer-events: none; }
+  .card.skeleton::after { display: none; }
+
+  .skel {
+    border-radius: 6px;
+    background: linear-gradient(90deg, rgba(255,255,255,.05) 25%, rgba(255,255,255,.09) 50%, rgba(255,255,255,.05) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.6s ease-in-out infinite;
+    animation-delay: var(--delay, 0ms);
+  }
+  .skel-tag   { width: 56px; height: 17px; border-radius: var(--rpill); }
+  .skel-title { height: 19px; margin-top: .35rem; }
+  .skel-sub   { height: 13px; width: 50%; margin-top: .3rem; }
+  .skel-meta  { height: 11px; width: 70%; margin-top: .35rem; }
+
+  /* ── Empty state ── */
+  .empty-state { text-align: center; padding: 4rem 1rem; }
+  .empty-icon  { font-size: 2.5rem; margin-bottom: .75rem; opacity: .45; }
+  .empty-label { font-size: .9rem; color: var(--c30); margin-bottom: 1.25rem; }
+  .cta-btn {
+    padding: .625rem 1.5rem;
+    background: var(--gold);
+    border: none;
+    border-radius: var(--rpill);
+    color: var(--ink);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .875rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .cta-btn:hover { background: var(--gold-lt); }
+
+  /* ── Load more ── */
+  .load-more-btn {
+    display: block; width: 100%; margin-top: 1.25rem;
+    padding: .875rem;
+    background: var(--c06);
+    border: 1px solid var(--bmd);
+    border-radius: var(--r);
+    color: var(--c60);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .875rem;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+  }
+  .load-more-btn:hover { background: var(--c12); color: var(--cream); }
+
+  .load-more-wrap { display: flex; justify-content: center; padding: 1.5rem; }
+  .dot-loader { display: flex; gap: .4rem; align-items: center; }
+  .dot-loader i {
+    display: block;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--gold);
+    animation: dotPulse 1.2s ease-in-out infinite;
+    font-style: normal;
+  }
+  .dot-loader i:nth-child(2) { animation-delay: .2s; }
+  .dot-loader i:nth-child(3) { animation-delay: .4s; }
+
+  /* ── Bottom nav ── */
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: .875rem;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(10,18,32,.94);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--bmd);
+    border-radius: var(--rpill);
+    padding: .5rem .75rem;
+    gap: .25rem;
+    box-shadow: 0 8px 40px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.04);
+    z-index: 100;
+  }
+
+  .bnav-item {
+    display: flex; flex-direction: column; align-items: center;
+    gap: .18rem;
+    padding: .4rem .875rem;
+    border-radius: 40px;
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .62rem;
+    font-weight: 500;
+    color: var(--c30);
+    text-decoration: none;
+    border: none; background: none;
+    cursor: pointer;
+    transition: color .2s, background .2s;
+    position: relative;
+  }
+  .bnav-item svg { width: 19px; height: 19px; transition: transform .2s; }
+  .bnav-item:hover,
+  .bnav-item.active { color: var(--gold); background: var(--gold-dim); }
+  .bnav-item.active svg { transform: scale(1.1); }
+
+  .bnav-pip {
+    position: absolute;
+    top: 4px; right: 4px;
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--gold);
+  }
+
+  /* ── Overlay / Bottom sheet ── */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.7);
+    display: flex; align-items: flex-end; justify-content: center;
+    z-index: 1000;
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+    animation: fadeIn .2s ease;
+  }
+
+  .sheet {
+    background: var(--ink-1);
+    width: 100%;
+    max-width: 600px;
+    border-radius: 24px 24px 0 0;
+    max-height: 88vh;
+    overflow-y: auto;
+    position: relative;
+    animation: slideUp .35s cubic-bezier(.22,1,.36,1);
+    border: 1px solid var(--border);
+    border-bottom: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sheet-handle {
+    width: 36px; height: 4px;
+    background: var(--c12); border-radius: 2px;
+    margin: .875rem auto 0;
+    flex-shrink: 0;
+  }
+
+  .sheet-close {
+    position: absolute;
+    top: 1rem; right: 1rem;
+    width: 32px; height: 32px;
+    background: var(--c06);
+    border: 1px solid var(--border);
+    border-radius: 50%;
+    color: var(--c60);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s;
+    z-index: 10;
+  }
+  .sheet-close:hover { background: var(--c12); color: var(--cream); }
+  .sheet-close svg { width: 14px; height: 14px; }
+
+  /* ── Sheet header ── */
+  .sheet-header {
+    padding: 1.25rem 1.25rem .875rem;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--cat, var(--gold)) 6%, transparent), transparent);
+    /* fallback */
+    background: linear-gradient(180deg, rgba(200,146,42,.06), transparent);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--cat, var(--gold)) 6%, transparent), transparent);
+  }
+  .sheet-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.45rem;
+    font-weight: 500;
+    line-height: 1.2;
+    letter-spacing: -.02em;
+    margin: .5rem 0 .3rem;
+  }
+  .sheet-lecturer { font-size: .9rem; color: var(--sage); }
+
+  /* ── Sheet body ── */
+  .sheet-body { padding: 1.25rem; }
+
+  .sheet-summary {
+    font-size: .875rem;
+    color: var(--c60);
+    line-height: 1.65;
+    margin-bottom: 1.25rem;
+  }
+
+  /* ── Detail grid ── */
+  .detail-grid {
+    background: var(--c06);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    overflow: hidden;
+    margin-bottom: 1.25rem;
+  }
+  .detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    padding: .7rem 1rem;
+    border-bottom: 1px solid var(--border);
+  }
   .detail-row:last-child { border-bottom: none; }
-  .detail-row .label { color: rgba(255,255,255,0.5); font-size: 0.85rem; }
-  .detail-row span:last-child { font-weight: 500; }
-  
-  .links-section { margin-top: 1.25rem; }
-  .links-section h4 { font-size: 0.75rem; color: rgba(255,255,255,0.5); text-transform: uppercase; letter: 0.5px; margin: 0 0 0.75rem; }
-  .links { display: flex; flex-direction: column; gap: 0.5rem; }
-  .link-btn { display: flex; align-items: center; gap: 0.75rem; padding: 0.85rem 1rem; background: rgba(255,138,0,0.1); border: 1px solid rgba(255,138,0,0.25); border-radius: 10px; color: #fff; text-decoration: none; font-weight: 500; transition: all 0.15s; }
-  .link-btn:hover { background: rgba(255,138,0,0.15); }
-  .link-btn .icon { font-size: 1.1rem; }
-  
-  .actions { margin-top: 1.5rem; display: flex; flex-direction: column; gap: 0.75rem; }
-  .btn { display: flex; align-items: center; justify-content: center; gap: 0.5rem; width: 100%; padding: 1rem; border-radius: 10px; font-weight: 600; cursor: pointer; border: none; font-size: 1rem; background: rgba(255,255,255,0.1); color: #fff; box-sizing: border-box; }
-  .btn svg { width: 20px; height: 20px; }
-  .btn.active { background: rgba(255,138,0,0.2); color: var(--primary); }
-  .btn.active svg { color: var(--primary); }
-  .btn.primary { background: var(--primary); color: var(--bg); }
-  
-  .load-more { display: block; width: calc(100% - 2rem); margin: 1rem auto; padding: 0.875rem; background: rgba(255,255,255,0.1); border: none; border-radius: 10px; color: #fff; font-size: 1rem; cursor: pointer; }
-  .load-more:disabled { opacity: 0.5; }
-  
-  @media (max-width: 768px) {
-    .modal-overlay { align-items: flex-end; }
-    .modal, .about-modal { border-radius: 20px 20px 0 0; max-height: 85vh; }
-    .filters { grid-template-columns: 1fr; }
-    .filters select, .clear-btn { grid-column: span 1; }
+  .detail-label { font-size: .78rem; color: var(--c30); flex-shrink: 0; }
+  .detail-val   { font-size: .85rem; color: var(--cream); font-weight: 500; text-align: right; }
+
+  /* ── Join links ── */
+  .join-section { margin-bottom: 1.25rem; }
+  .join-label {
+    font-size: .7rem;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    color: var(--c30);
+    font-weight: 600;
+    margin-bottom: .625rem;
+  }
+  .join-links { display: flex; flex-direction: column; gap: .5rem; }
+  .join-btn {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .75rem 1rem;
+    background: var(--gold-dim);
+    border: 1px solid rgba(200,146,42,.2);
+    border-radius: var(--r);
+    color: var(--cream);
+    text-decoration: none;
+    font-size: .875rem; font-weight: 500;
+    transition: background .15s, border-color .15s;
+  }
+  .join-btn:hover { background: rgba(200,146,42,.18); border-color: rgba(200,146,42,.35); }
+  .join-platform {
+    font-size: .68rem; color: var(--gold);
+    font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; min-width: 56px;
+  }
+
+  /* ── Sheet actions ── */
+  .sheet-actions {
+    display: grid; grid-template-columns: 1fr 1fr; gap: .75rem;
+    margin-top: 1.25rem;
+  }
+
+  .action-btn {
+    display: flex; align-items: center; justify-content: center; gap: .4rem;
+    padding: .875rem;
+    border-radius: var(--r);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .85rem; font-weight: 600;
+    cursor: pointer; border: none;
+    transition: all .15s; width: 100%;
+  }
+  .action-btn svg { width: 17px; height: 17px; flex-shrink: 0; }
+
+  .action-btn.secondary {
+    background: var(--c06);
+    border: 1px solid var(--bmd);
+    color: var(--c60);
+  }
+  .action-btn.secondary:hover { background: var(--c12); color: var(--cream); }
+  .action-btn.secondary.on {
+    background: var(--gold-dim);
+    border-color: rgba(200,146,42,.3);
+    color: var(--gold);
+  }
+  .action-btn.primary { background: var(--gold); color: var(--ink); }
+  .action-btn.primary:hover { background: var(--gold-lt); }
+  .action-btn.primary.saved {
+    background: rgba(200,146,42,.15);
+    border: 1px solid rgba(200,146,42,.35);
+    color: var(--gold);
+  }
+
+  /* ── About modal ── */
+  .about-header {
+    padding: 2rem 1.25rem 1.25rem;
+    text-align: center;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(200,146,42,.06), transparent);
+  }
+  .about-logo-ring {
+    width: 68px; height: 68px;
+    border-radius: 20px;
+    background: #fff;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto .875rem;
+    box-shadow: 0 4px 24px rgba(0,0,0,.3);
+  }
+  .about-logo { width: 52px; height: 52px; object-fit: contain; border-radius: 14px; }
+  .about-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.6rem; font-weight: 500;
+    letter-spacing: -.02em; margin-bottom: .3rem;
+  }
+  .about-sub { font-size: .85rem; color: var(--c60); }
+
+  .about-card {
+    display: flex; gap: .875rem; align-items: flex-start;
+    background: var(--c06);
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    padding: 1rem;
+    margin-bottom: .75rem;
+  }
+  .about-card-icon { font-size: 1.4rem; flex-shrink: 0; margin-top: .1rem; }
+  .about-card h3 { font-size: .9rem; font-weight: 600; margin-bottom: .35rem; color: var(--cream); }
+  .about-card p  { font-size: .83rem; color: var(--c60); line-height: 1.6; }
+  .about-card strong { color: var(--gold); }
+  .about-contact {
+    display: inline-block;
+    margin-top: .5rem;
+    font-size: .8rem;
+    color: var(--sage);
+    font-weight: 500;
+    transition: opacity .15s;
+  }
+  .about-contact:hover { opacity: .75; }
+
+  .about-footer {
+    text-align: center;
+    padding-top: .875rem;
+    border-top: 1px solid var(--border);
+    margin-top: .875rem;
+  }
+  .about-footer p { font-size: .75rem; color: var(--c30); }
+  .dua { color: var(--gold); margin-top: .2rem; font-weight: 500; opacity: .8; }
+
+  /* ── Keyframes ── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+  @keyframes slideUp {
+    from { transform: translateY(100%); }
+    to   { transform: translateY(0); }
+  }
+  @keyframes shimmer {
+    0%   { background-position: -200% center; }
+    100% { background-position:  200% center; }
+  }
+  @keyframes dotPulse {
+    0%, 80%, 100% { opacity: .3; transform: scale(.8); }
+    40%           { opacity: 1; transform: scale(1); }
+  }
+
+  /* ── Desktop tweaks ── */
+  @media (min-width: 768px) {
+    .sheet { border-radius: 24px; }
+    .overlay { align-items: center; padding: 1rem; }
   }
 </style>
