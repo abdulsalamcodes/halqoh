@@ -1,15 +1,49 @@
 :root {
-  --bg: #0c1b2b;
+  --ink:      #07101C;
+  --ink-1:    #0C1827;
+  --ink-2:    #132034;
+  --gold:     #C8922A;
+  --gold-lt:  #E0B860;
+  --gold-dim: rgba(200, 146, 42, 0.12);
+  --sage:     #4BBFAD;
+  --sage-dim: rgba(75, 191, 173, 0.10);
+  --cream:    #EDE5D8;
+  --border:   rgba(237, 229, 216, 0.08);
+  --radius:   14px;
 }
 
-* {
+*, *::before, *::after {
+  box-sizing: border-box;
   margin: 0;
   padding: 0;
-  text-decoration: none;
-  font-family: 'Inter', sans-serif;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
-  background: var(--bg);
-  color: #fff;
+  background: var(--ink);
+  color: var(--cream);
+  font-family: 'Sora', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: none;
+}
+
+a { text-decoration: none; color: inherit; }
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, select {
+  font-family: inherit;
+}
+
+img {
+  display: block;
+  max-width: 100%;
 }
