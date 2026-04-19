@@ -25,7 +25,9 @@
   "homepage": "https://github.com/abdulsalamcodes/halqoh#readme",
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
+    "@vitejs/plugin-legacy": "^8.0.1",
     "svelte": "^5.55.4",
+    "terser": "^5.46.1",
     "vite": "^8.0.8"
   }
 }

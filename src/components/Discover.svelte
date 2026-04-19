@@ -72,15 +72,19 @@
   let countFetched = $state(false)
   
   async function fetchCount() {
-    const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&select=id`
-    const response = await fetch(url, {
-      headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY }
-    })
-    if (response.ok) {
-      const data = await response.json()
-      totalCount = data.length
-      countFetched = true
-      console.log('Total count:', totalCount)
+    try {
+      const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&select=id`
+      const response = await fetch(url, {
+        headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY }
+      })
+      if (response.ok) {
+        const data = await response.json()
+        totalCount = data.length
+        countFetched = true
+        console.log('Total count:', totalCount)
+      }
+    } catch (e) {
+      console.error('fetchCount error:', e)
     }
   }
 
@@ -116,10 +120,9 @@
 
   function getDayIndex(day) { return dayOptions.indexOf(day) }
 
-  let filteredHalqahs = $derived(() => {
-    console.log('Filtering:', halqahs.length, 'items')
+  let filteredHalqahs = $derived.by(() => {
     return halqahs.filter(h => {
-      const matchesSearch = !searchQuery || 
+      const matchesSearch = !searchQuery ||
         h.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         h.lecturer?.toLowerCase().includes(searchQuery.toLowerCase())
       const matchesCategory = selectedCategory === 'All Categories' || getCategoryName(h.category) === selectedCategory
@@ -178,8 +181,8 @@
     const current = sessionReminders[halqah.id] || false
     sessionReminders = { ...sessionReminders, [halqah.id]: !current }
     localStorage.setItem('sessionReminders', JSON.stringify(sessionReminders))
-    
-    if (!current && Notification.permission === 'granted') {
+
+    if (!current && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
       scheduleNotification(halqah)
     }
   }
@@ -194,7 +197,7 @@
   }
 
   function checkReminders() {
-    if (Notification.permission !== 'granted') return
+    if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
     
     const now = new Date()
     const currentDay = now.getDay()
@@ -227,12 +230,12 @@
     selectedSpeaker = ''
   }
 
-  let hasActiveFilters = $derived(() => 
+  let hasActiveFilters = $derived.by(() =>
     selectedCategory !== 'All Categories' || selectedDay !== 'All Days' || selectedLanguage !== 'All Languages' || selectedSpeaker
   )
 
   onMount(() => {
-    Promise.all([fetchHalqahs(true), fetchCount()])
+    Promise.all([fetchHalqahs(true), fetchCount()]).catch(e => console.error('onMount fetch error:', e))
     
     // Load reminder settings
     try {
@@ -279,10 +282,10 @@
       <input type="text" placeholder="Search..." bind:value={searchQuery} />
       {#if searchQuery}<button class="clear" onclick={() => searchQuery = ''}>×</button>{/if}
     </div>
-    <button class="filter-btn" class:active={!filtersCollapsed || hasActiveFilters()} onclick={() => filtersCollapsed = !filtersCollapsed}>
+    <button class="filter-btn" class:active={!filtersCollapsed || hasActiveFilters} onclick={() => filtersCollapsed = !filtersCollapsed}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21h16M4 10h16M4 3h16M4 14h16"/></svg>
       Filters
-      {#if hasActiveFilters()}<span class="dot"></span>{/if}
+      {#if hasActiveFilters}<span class="dot"></span>{/if}
     </button>
   </div>
 
@@ -303,11 +306,11 @@
           <option value={lecturer}>{lecturer.length > 20 ? lecturer.slice(0, 20) + '...' : lecturer}</option>
         {/each}
       </select>
-      {#if hasActiveFilters()}<button class="clear-btn" onclick={clearFilters}>Clear</button>{/if}
+      {#if hasActiveFilters}<button class="clear-btn" onclick={clearFilters}>Clear</button>{/if}
     </div>
     {#if !loading && halqahs.length > 0}
       <div class="results-count">
-        {hasActiveFilters() ? `Showing ${filteredHalqahs().length} of ${halqahs.length}` : `${halqahs.length} sessions available`}
+        {hasActiveFilters ? `Showing ${filteredHalqahs.length} of ${halqahs.length}` : `${halqahs.length} sessions available`}
       </div>
     {/if}
   {/if}
@@ -317,11 +320,11 @@
       <div class="state"><div class="spinner"></div><p>Loading...</p></div>
     {:else if error}
       <div class="state"><p>{error}</p><button onclick={fetchHalqahs}>Retry</button></div>
-    {:else if filteredHalqahs().length === 0}
+    {:else if filteredHalqahs.length === 0}
       <div class="state"><p>No sessions found</p></div>
     {:else}
       <div class="cards">
-        {#each filteredHalqahs() as halqah}
+        {#each filteredHalqahs as halqah}
           <button class="card" onclick={() => selectedSession = halqah}>
             <div class="card-img">&#128218;</div>
             <div class="card-body">
