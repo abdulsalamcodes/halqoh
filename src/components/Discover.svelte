@@ -9,7 +9,7 @@
   let error = $state(null)
   let currentPage = $state(1)
   let totalCount = $state(0)
-  const PAGE_SIZE = 15
+  const PAGE_SIZE = 100
   let searchQuery = $state('')
   let selectedCategory = $state('All Categories')
   let selectedDay = $state('All Days')
@@ -119,6 +119,10 @@
   }
 
   function getDayIndex(day) { return dayOptions.indexOf(day) }
+
+  let uniqueLecturers = $derived.by(() =>
+    [...new Set(halqahs.map(h => h.lecturer).filter(Boolean))].sort()
+  )
 
   let filteredHalqahs = $derived.by(() => {
     return halqahs.filter(h => {
@@ -332,6 +336,19 @@
           {/each}
         </div>
       </div>
+      {#if uniqueLecturers.length > 0}
+        <div class="filter-group">
+          <span class="filter-label">Lecturer</span>
+          <div class="chips-row" role="group">
+            <button class="chip" class:active={selectedSpeaker === ''}
+              onclick={() => selectedSpeaker = ''}>Any</button>
+            {#each uniqueLecturers as lecturer}
+              <button class="chip" class:active={selectedSpeaker === lecturer}
+                onclick={() => selectedSpeaker = lecturer}>{lecturer}</button>
+            {/each}
+          </div>
+        </div>
+      {/if}
       {#if hasActiveFilters}
         <button class="clear-all" onclick={() => { clearFilters(); filtersOpen = false }}>✕ Clear all</button>
       {/if}
