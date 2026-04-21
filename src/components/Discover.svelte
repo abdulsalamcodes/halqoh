@@ -15,6 +15,8 @@
   let selectedDay = $state('All Days')
   let selectedLanguage = $state('All Languages')
   let selectedSpeaker = $state('')
+  let searchResults  = $state(null)   // null = not searching, array = FTS results
+  let searchLoading  = $state(false)
   let selectedSession = $state(null)
   let showAbout = $state(false)
   let filtersOpen = $state(false)
@@ -124,16 +126,36 @@
     [...new Set(halqahs.map(h => h.lecturer).filter(Boolean))].sort()
   )
 
+  async function ftsSearch(query) {
+    try {
+      const url = `${SUPABASE_URL}/rest/v1/halqahs?fts=plfts(simple).${encodeURIComponent(query)}&status=eq.published&order=created_at.desc`
+      const res = await fetch(url, { headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY } })
+      if (!res.ok) throw new Error('FTS failed')
+      searchResults = await res.json()
+    } catch (e) {
+      console.error('FTS error:', e)
+      searchResults = []
+    } finally {
+      searchLoading = false
+    }
+  }
+
+  $effect(() => {
+    const q = searchQuery.trim()
+    if (!q) { searchResults = null; searchLoading = false; return }
+    searchLoading = true
+    const timer = setTimeout(() => ftsSearch(q), 300)
+    return () => clearTimeout(timer)
+  })
+
   let filteredHalqahs = $derived.by(() => {
-    return halqahs.filter(h => {
-      const matchesSearch = !searchQuery ||
-        h.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        h.lecturer?.toLowerCase().includes(searchQuery.toLowerCase())
+    const base = searchResults !== null ? searchResults : halqahs
+    return base.filter(h => {
       const matchesCategory = selectedCategory === 'All Categories' || getCategoryName(h.category) === selectedCategory
       const matchesDay = selectedDay === 'All Days' || (h.schedule?.recurring?.days || []).includes(getDayIndex(selectedDay))
       const matchesLanguage = selectedLanguage === 'All Languages' || h.language?.toLowerCase() === selectedLanguage.toLowerCase()
       const matchesSpeaker = !selectedSpeaker || h.lecturer === selectedSpeaker
-      return matchesSearch && matchesCategory && matchesDay && matchesLanguage && matchesSpeaker
+      return matchesCategory && matchesDay && matchesLanguage && matchesSpeaker
     })
   })
 
@@ -282,7 +304,9 @@
         autocorrect="off"
         spellcheck="false"
       />
-      {#if searchQuery}
+      {#if searchLoading}
+        <span class="search-spinner" aria-hidden="true"></span>
+      {:else if searchQuery}
         <button class="search-clear" onclick={() => searchQuery = ''} aria-label="Clear search">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
             <path d="M18 6L6 18M6 6l12 12"/>
@@ -357,8 +381,17 @@
 
   <!-- ── CONTENT ── -->
   <main class="content">
-    {#if hasActiveFilters && !loading}
-      <p class="results-meta">{filteredHalqahs.length} of {halqahs.length} sessions</p>
+    {#if (hasActiveFilters || searchQuery) && !loading}
+      <p class="results-meta">
+        {#if searchLoading}
+          Searching…
+        {:else if searchResults !== null}
+          {filteredHalqahs.length} result{filteredHalqahs.length !== 1 ? 's' : ''}
+          {#if hasActiveFilters}&nbsp;· filtered{/if}
+        {:else}
+          {filteredHalqahs.length} of {halqahs.length} sessions
+        {/if}
+      </p>
     {/if}
 
     {#if loading && halqahs.length === 0}
@@ -801,6 +834,16 @@
   }
   .search-field input::placeholder { color: var(--c30); }
 
+  .search-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid rgba(237,229,216,0.15);
+    border-top-color: var(--gold);
+    border-radius: 50%;
+    flex-shrink: 0;
+    animation: spin .6s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .search-clear {
     background: none; border: none;
     color: var(--c30); cursor: pointer;

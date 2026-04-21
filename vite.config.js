@@ -16,6 +16,7 @@ export default defineConfig({
         index: 'index.html',
         mysessions: 'mysessions.html',
         about: 'about.html',
+        admin: 'admin.html',
       },
     },
   },
