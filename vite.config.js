@@ -17,6 +17,7 @@ export default defineConfig({
         mysessions: 'mysessions.html',
         about: 'about.html',
         admin: 'admin.html',
+        calendar: 'calendar.html',
       },
     },
   },

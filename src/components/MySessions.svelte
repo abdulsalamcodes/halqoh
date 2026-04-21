@@ -209,6 +209,12 @@
       </svg>
       <span>Discover</span>
     </a>
+    <a href="/calendar.html" class="bnav-item">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+      </svg>
+      <span>Calendar</span>
+    </a>
     <a href="/mysessions.html" class="bnav-item active" aria-current="page">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z"/>
