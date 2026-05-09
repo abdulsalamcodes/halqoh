@@ -126,6 +126,20 @@
     [...new Set(halqahs.map(h => h.lecturer).filter(Boolean))].sort()
   )
 
+  let speakerDropdownOpen = $state(false)
+  let speakerSearch       = $state('')
+
+  let filteredLecturers = $derived.by(() => {
+    const q = speakerSearch.trim().toLowerCase()
+    return q ? uniqueLecturers.filter(l => l.toLowerCase().includes(q)) : uniqueLecturers
+  })
+
+  function clickOutside(node, cb) {
+    function handle(e) { if (!node.contains(e.target)) cb() }
+    document.addEventListener('pointerdown', handle, true)
+    return { destroy() { document.removeEventListener('pointerdown', handle, true) } }
+  }
+
   async function ftsSearch(query) {
     try {
       const url = `${SUPABASE_URL}/rest/v1/halqahs?fts=plfts(simple).${encodeURIComponent(query)}&status=eq.published&order=created_at.desc`
@@ -363,13 +377,62 @@
       {#if uniqueLecturers.length > 0}
         <div class="filter-group">
           <span class="filter-label">Lecturer</span>
-          <div class="chips-row" role="group">
-            <button class="chip" class:active={selectedSpeaker === ''}
-              onclick={() => selectedSpeaker = ''}>Any</button>
-            {#each uniqueLecturers as lecturer}
-              <button class="chip" class:active={selectedSpeaker === lecturer}
-                onclick={() => selectedSpeaker = lecturer}>{lecturer}</button>
-            {/each}
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="speaker-picker" use:clickOutside={() => { speakerDropdownOpen = false; speakerSearch = '' }}
+            onkeydown={(e) => e.key === 'Escape' && (speakerDropdownOpen = false)}>
+            <button
+              class="speaker-trigger"
+              class:active={selectedSpeaker !== ''}
+              onclick={() => speakerDropdownOpen = !speakerDropdownOpen}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px;flex-shrink:0"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <span class="trigger-label">{selectedSpeaker || 'Any lecturer'}</span>
+              {#if selectedSpeaker}
+                <button class="trigger-clear" onclick={(e) => { e.stopPropagation(); selectedSpeaker = ''; speakerSearch = '' }} aria-label="Clear">✕</button>
+              {:else}
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px;flex-shrink:0;margin-left:auto;opacity:.5"><path d="M6 9l6 6 6-6"/></svg>
+              {/if}
+            </button>
+
+            {#if speakerDropdownOpen}
+              <div class="speaker-dropdown">
+                <div class="speaker-search-row">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+                  <input
+                    class="speaker-search-input"
+                    type="search"
+                    placeholder="Search lecturers…"
+                    bind:value={speakerSearch}
+                    autofocus
+                    autocomplete="off"
+                  />
+                  {#if speakerSearch}
+                    <button class="spk-clear-btn" onclick={() => speakerSearch = ''}>✕</button>
+                  {/if}
+                </div>
+                <div class="speaker-list" role="listbox">
+                  <button
+                    class="speaker-opt"
+                    class:selected={selectedSpeaker === ''}
+                    role="option"
+                    aria-selected={selectedSpeaker === ''}
+                    onclick={() => { selectedSpeaker = ''; speakerDropdownOpen = false; speakerSearch = '' }}
+                  >Any lecturer</button>
+                  {#each filteredLecturers as lecturer}
+                    <button
+                      class="speaker-opt"
+                      class:selected={selectedSpeaker === lecturer}
+                      role="option"
+                      aria-selected={selectedSpeaker === lecturer}
+                      onclick={() => { selectedSpeaker = lecturer; speakerDropdownOpen = false; speakerSearch = '' }}
+                    >{lecturer}</button>
+                  {/each}
+                  {#if filteredLecturers.length === 0}
+                    <p class="speaker-empty">No lecturers found</p>
+                  {/if}
+                </div>
+              </div>
+            {/if}
           </div>
         </div>
       {/if}
@@ -933,6 +996,121 @@
     padding: .15rem 0; opacity: .8; transition: opacity .15s;
   }
   .clear-all:hover { opacity: 1; }
+
+  /* ── Searchable speaker picker ── */
+  .speaker-picker {
+    position: relative;
+  }
+  .speaker-trigger {
+    display: flex;
+    align-items: center;
+    gap: .45rem;
+    width: 100%;
+    background: var(--ink-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    color: rgba(237,229,216,.55);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .82rem;
+    font-weight: 500;
+    padding: .55rem .75rem;
+    cursor: pointer;
+    transition: border-color .15s, color .15s;
+    text-align: left;
+  }
+  .speaker-trigger:hover { border-color: rgba(237,229,216,.2); color: var(--cream); }
+  .speaker-trigger.active { border-color: var(--gold); color: var(--gold-lt); }
+  .trigger-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .trigger-clear {
+    background: none; border: none;
+    color: rgba(237,229,216,.4); font-size: .72rem;
+    cursor: pointer; padding: 0 .1rem; line-height: 1;
+    flex-shrink: 0;
+    transition: color .15s;
+  }
+  .trigger-clear:hover { color: var(--cream); }
+
+  .speaker-dropdown {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0; right: 0;
+    background: var(--ink-1);
+    border: 1px solid rgba(237,229,216,.12);
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,.5);
+    z-index: 50;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    max-height: 280px;
+  }
+  .speaker-search-row {
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .6rem .75rem;
+    border-bottom: 1px solid rgba(237,229,216,.07);
+    flex-shrink: 0;
+  }
+  .speaker-search-row > svg { width: 14px; height: 14px; color: rgba(237,229,216,.35); flex-shrink: 0; }
+  .speaker-search-input {
+    flex: 1;
+    background: none;
+    border: none;
+    outline: none;
+    color: var(--cream);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .82rem;
+  }
+  .speaker-search-input::placeholder { color: rgba(237,229,216,.3); }
+  .spk-clear-btn {
+    background: none; border: none;
+    color: rgba(237,229,216,.35); font-size: .7rem;
+    cursor: pointer; flex-shrink: 0; padding: 0;
+    transition: color .15s;
+  }
+  .spk-clear-btn:hover { color: var(--cream); }
+
+  .speaker-list {
+    overflow-y: auto;
+    flex: 1;
+    padding: .3rem 0;
+  }
+  .speaker-list::-webkit-scrollbar { width: 3px; }
+  .speaker-list::-webkit-scrollbar-track { background: transparent; }
+  .speaker-list::-webkit-scrollbar-thumb { background: rgba(237,229,216,.1); border-radius: 3px; }
+
+  .speaker-opt {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    color: rgba(237,229,216,.65);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .82rem;
+    padding: .5rem .85rem;
+    cursor: pointer;
+    transition: background .1s, color .1s;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .speaker-opt:hover { background: rgba(237,229,216,.06); color: var(--cream); }
+  .speaker-opt.selected { color: var(--gold); background: var(--gold-dim); }
+
+  .speaker-empty {
+    font-size: .78rem;
+    color: rgba(237,229,216,.3);
+    text-align: center;
+    padding: 1rem;
+    margin: 0;
+  }
 
   /* ── Results meta ── */
   .results-meta {
