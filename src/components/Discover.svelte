@@ -9,8 +9,10 @@
   let error = $state(null)
   let currentPage = $state(1)
   let totalCount = $state(0)
-  const PAGE_SIZE = 100
+  const PAGE_SIZE = 15
+  const SEARCH_PAGE_SIZE = 1000
   let searchQuery = $state('')
+  let isSearching = $state(false)
   let selectedCategory = $state('All Categories')
   let selectedDay = $state('All Days')
   let selectedLanguage = $state('All Languages')
@@ -29,43 +31,39 @@
   const languages   = ['All Languages', 'yoruba', 'english', 'arabic', 'hausa', 'french']
   const days        = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
-  const CAT_CHIP = {
-    'All Categories': 'All', 'Quran Studies': 'Quran',
-    'Hadith Explanations': 'Hadith', 'Islamic Law': 'Fiqh',
-    'Spirituality': 'Spirituality', 'Language': 'Language',
-  }
-  const DAY_CHIP = {
-    'All Days': 'Any', 'Sunday': 'Sun', 'Monday': 'Mon', 'Tuesday': 'Tue',
-    'Wednesday': 'Wed', 'Thursday': 'Thu', 'Friday': 'Fri', 'Saturday': 'Sat',
-  }
-  const LANG_CHIP = {
-    'All Languages': 'Any', 'yoruba': 'Yoruba', 'english': 'English',
-    'arabic': 'Arabic', 'hausa': 'Hausa', 'french': 'French',
-  }
-  const CAT_COLOR = {
-    'Quran Studies': '#4ADE80', 'Hadith Explanations': '#60A5FA',
-    'Islamic Law': '#A78BFA',   'Spirituality': '#F59E0B',
-    'Language': '#F472B6',      'General': '#94A3B8',
-  }
-
-  function catColor(cat) { return CAT_COLOR[cat] || CAT_COLOR['General'] }
-
-  const API_KEY    = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
+  const API_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
+
+  console.log('API_KEY:', API_KEY ? 'loaded' : 'missing')
+  console.log('SUPABASE_URL:', SUPABASE_URL)
 
   async function fetchHalqahs(reset = false) {
     try {
-      if (reset) { currentPage = 1; halqahs = [] }
+      if (reset) {
+        currentPage = 1
+        halqahs = []
+      }
+      
+      isSearching = searchQuery.length > 0
       loading = true
       error = null
-      const offset = (currentPage - 1) * PAGE_SIZE
-      const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&limit=${PAGE_SIZE}&offset=${offset}&order=created_at.desc`
+      
+      const filters = getFilterParams()
+      const filterParam = filters ? `&${filters}` : ''
+      const limit = isSearching ? SEARCH_PAGE_SIZE : PAGE_SIZE
+      const offset = isSearching ? 0 : (currentPage - 1) * PAGE_SIZE
+      
+      const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&limit=${limit}&offset=${offset}&order=created_at.desc${filterParam}`
+      console.log('Fetching halqahs:', url)
+      
       const response = await fetch(url, {
         headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY },
       })
       if (!response.ok) { error = 'Could not load sessions (HTTP ' + response.status + ')'; loading = false; return }
       const data = await response.json()
-      halqahs = reset ? data : [...halqahs, ...data]
+      console.log('Data received:', data.length)
+      halqahs = reset || isSearching ? data : [...halqahs, ...data]
+      totalCount = data.length
       if (reset) loadSavedSessions()
     } catch (e) {
       console.error('Fetch error:', e)
@@ -90,7 +88,7 @@
   }
 
   async function loadMore() {
-    if (loadingMore || halqahs.length < PAGE_SIZE) return
+    if (loadingMore || halqahs.length < PAGE_SIZE || isSearching) return
     currentPage++
     loadingMore = true
     await fetchHalqahs(false)
@@ -122,35 +120,13 @@
 
   function getDayIndex(day) { return dayOptions.indexOf(day) }
 
-  let uniqueLecturers = $derived.by(() =>
-    [...new Set(halqahs.map(h => h.lecturer).filter(Boolean))].sort()
-  )
-
-  async function ftsSearch(query) {
-    try {
-      const url = `${SUPABASE_URL}/rest/v1/halqahs?fts=plfts(simple).${encodeURIComponent(query)}&status=eq.published&order=created_at.desc`
-      const res = await fetch(url, { headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY } })
-      if (!res.ok) throw new Error('FTS failed')
-      searchResults = await res.json()
-    } catch (e) {
-      console.error('FTS error:', e)
-      searchResults = []
-    } finally {
-      searchLoading = false
-    }
-  }
-
-  $effect(() => {
-    const q = searchQuery.trim()
-    if (!q) { searchResults = null; searchLoading = false; return }
-    searchLoading = true
-    const timer = setTimeout(() => ftsSearch(q), 300)
-    return () => clearTimeout(timer)
-  })
-
-  let filteredHalqahs = $derived.by(() => {
-    const base = searchResults !== null ? searchResults : halqahs
-    return base.filter(h => {
+  let filteredHalqahs = $derived(() => {
+    console.log('Filtering:', halqahs.length, 'items')
+    if (isSearching) return halqahs
+    return halqahs.filter(h => {
+      const matchesSearch = !searchQuery || 
+        h.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        h.lecturer?.toLowerCase().includes(searchQuery.toLowerCase())
       const matchesCategory = selectedCategory === 'All Categories' || getCategoryName(h.category) === selectedCategory
       const matchesDay = selectedDay === 'All Days' || (h.schedule?.recurring?.days || []).includes(getDayIndex(selectedDay))
       const matchesLanguage = selectedLanguage === 'All Languages' || h.language?.toLowerCase() === selectedLanguage.toLowerCase()
@@ -178,6 +154,7 @@
   }
 
   function hasMore() {
+    if (isSearching) return false
     if (loadingMore) return false
     if (countFetched && totalCount > 0) return halqahs.length < totalCount
     return halqahs.length >= PAGE_SIZE
@@ -238,12 +215,17 @@
   )
 
   onMount(() => {
-    Promise.all([fetchHalqahs(true), fetchCount()]).catch(e => console.error('onMount fetch error:', e))
+    Promise.all([fetchHalqahs(true), fetchCount()])
+    
     try {
       const saved = localStorage.getItem('sessionReminders')
       sessionReminders = saved ? JSON.parse(saved) : {}
     } catch {}
-    if ('Notification' in window) notificationsEnabled = Notification.permission === 'granted'
+    
+    if ('Notification' in window) {
+      notificationsEnabled = Notification.permission === 'granted'
+    }
+    
     checkReminders()
     const interval = setInterval(checkReminders, 60000)
     return () => clearInterval(interval)
@@ -290,29 +272,11 @@
     <p class="hero-sub">Islamic knowledge circles, found for you</p>
   </header>
 
-  <!-- ── SEARCH + FILTER TOGGLE ── -->
-  <div class="search-wrap">
-    <div class="search-field">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
-      </svg>
-      <input
-        type="search"
-        placeholder="Search sessions or teachers…"
-        bind:value={searchQuery}
-        autocomplete="off"
-        autocorrect="off"
-        spellcheck="false"
-      />
-      {#if searchLoading}
-        <span class="search-spinner" aria-hidden="true"></span>
-      {:else if searchQuery}
-        <button class="search-clear" onclick={() => searchQuery = ''} aria-label="Clear search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path d="M18 6L6 18M6 6l12 12"/>
-          </svg>
-        </button>
-      {/if}
+  <div class="search-row">
+    <div class="search-bar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
+      <input type="text" placeholder="Search..." bind:value={searchQuery} oninput={() => fetchHalqahs(true)} />
+      {#if searchQuery}<button class="clear" onclick={() => searchQuery = ''}>×</button>{/if}
     </div>
     <button
       class="filter-toggle"
@@ -330,53 +294,30 @@
     </button>
   </div>
 
-  <!-- ── FILTER PANEL (collapsible) ── -->
-  {#if filtersOpen}
-    <div class="filter-panel">
-      <div class="filter-group">
-        <span class="filter-label">Category</span>
-        <div class="chips-row" role="group">
-          {#each categories as cat}
-            <button class="chip" class:active={selectedCategory === cat}
-              onclick={() => selectedCategory = cat}>{CAT_CHIP[cat] || cat}</button>
-          {/each}
-        </div>
-      </div>
-      <div class="filter-group">
-        <span class="filter-label">Day</span>
-        <div class="chips-row" role="group">
-          {#each dayOptions as day}
-            <button class="chip" class:active={selectedDay === day}
-              onclick={() => selectedDay = day}>{DAY_CHIP[day] || day}</button>
-          {/each}
-        </div>
-      </div>
-      <div class="filter-group">
-        <span class="filter-label">Language</span>
-        <div class="chips-row" role="group">
-          {#each languages as lang}
-            <button class="chip" class:active={selectedLanguage === lang}
-              onclick={() => selectedLanguage = lang}>{LANG_CHIP[lang] || lang}</button>
-          {/each}
-        </div>
-      </div>
-      {#if uniqueLecturers.length > 0}
-        <div class="filter-group">
-          <span class="filter-label">Lecturer</span>
-          <div class="chips-row" role="group">
-            <button class="chip" class:active={selectedSpeaker === ''}
-              onclick={() => selectedSpeaker = ''}>Any</button>
-            {#each uniqueLecturers as lecturer}
-              <button class="chip" class:active={selectedSpeaker === lecturer}
-                onclick={() => selectedSpeaker = lecturer}>{lecturer}</button>
-            {/each}
-          </div>
-        </div>
-      {/if}
-      {#if hasActiveFilters}
-        <button class="clear-all" onclick={() => { clearFilters(); filtersOpen = false }}>✕ Clear all</button>
-      {/if}
+  {#if !filtersCollapsed}
+    <div class="filters">
+      <select bind:value={selectedCategory}>
+        {#each categories as cat}<option value={cat}>{cat}</option>{/each}
+      </select>
+      <select bind:value={selectedDay}>
+        {#each dayOptions as day}<option value={day}>{day}</option>{/each}
+      </select>
+      <select bind:value={selectedLanguage}>
+        {#each languages as lang}<option value={lang}>{lang}</option>{/each}
+      </select>
+      <select bind:value={selectedSpeaker}>
+        <option value="">All Speakers</option>
+        {#each getUniqueLecturers() as lecturer}
+          <option value={lecturer}>{lecturer.length > 20 ? lecturer.slice(0, 20) + '...' : lecturer}</option>
+        {/each}
+      </select>
+      {#if hasActiveFilters()}<button class="clear-btn" onclick={clearFilters}>Clear</button>{/if}
     </div>
+    {#if !loading && halqahs.length > 0}
+      <div class="results-count">
+        {hasActiveFilters() ? `Showing ${filteredHalqahs().length} of ${halqahs.length}` : `${halqahs.length} sessions available`}
+      </div>
+    {/if}
   {/if}
 
   <!-- ── CONTENT ── -->
