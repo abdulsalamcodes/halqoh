@@ -23,11 +23,12 @@
   const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
   // ── State ──────────────────────────────────────────────────
-  let halqahs     = $state([])
-  let loading     = $state(true)
-  let currentDate = $state(new Date())
-  let now         = $state(new Date())
-  let scrollEl    = $state(null)
+  let halqahs        = $state([])
+  let loading        = $state(true)
+  let currentDate    = $state(new Date())
+  let now            = $state(new Date())
+  let scrollEl       = $state(null)
+  let selectedSession = $state(null)
 
   // Swipe state (plain vars, not reactive — only dragOffset drives the UI)
   let pStartX = 0, pStartY = 0
@@ -87,6 +88,12 @@
     return m ? `${hr}:${String(m).padStart(2, '0')}${ampm}` : `${hr}${ampm}`
   }
 
+  function getDaysFull(sched) {
+    const DAY_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday']
+    if (!sched?.recurring?.days) return ''
+    return sched.recurring.days.map(d => DAY_FULL[d]).join(', ')
+  }
+
   function fmtDuration(start, end) {
     const s = parseHours(start), e = parseHours(end)
     if (s === null || e === null) return ''
@@ -123,6 +130,52 @@
       )
   })
 
+  // ── Overlap layout ─────────────────────────────────────────
+  // Assigns each session a column index + total columns so overlapping
+  // events sit side-by-side instead of stacking on top of each other.
+  let layout = $derived.by(() => {
+    const events = sessionsForDay
+      .map(s => {
+        const start  = parseHours(s.schedule?.recurring?.start_time)
+        const endRaw = parseHours(s.schedule?.recurring?.end_time)
+        const end    = (endRaw !== null && endRaw > start) ? endRaw : start + 0.75
+        return { session: s, start, end, col: 0, totalCols: 1 }
+      })
+      .filter(e => e.start !== null && e.start >= GRID_START && e.start <= GRID_END)
+
+    // Greedily assign columns
+    const colEnds = []
+    for (const ev of events) {
+      let placed = false
+      for (let c = 0; c < colEnds.length; c++) {
+        if (colEnds[c] <= ev.start) {
+          ev.col = c
+          colEnds[c] = ev.end
+          placed = true
+          break
+        }
+      }
+      if (!placed) {
+        ev.col = colEnds.length
+        colEnds.push(ev.end)
+      }
+    }
+
+    // For each event, find the max column index among all events it overlaps with
+    for (const ev of events) {
+      let maxCol = ev.col
+      for (const other of events) {
+        if (other === ev) continue
+        if (other.start < ev.end && other.end > ev.start) {
+          maxCol = Math.max(maxCol, other.col)
+        }
+      }
+      ev.totalCols = maxCol + 1
+    }
+
+    return events
+  })
+
   let nowLineStyle = $derived.by(() => {
     if (!isToday(currentDate)) return null
     const h = now.getHours() + now.getMinutes() / 60
@@ -131,16 +184,19 @@
   })
 
   // ── Event positioning ──────────────────────────────────────
-  function eventStyle(s) {
-    const start = parseHours(s.schedule?.recurring?.start_time)
-    if (start === null || start < GRID_START || start > GRID_END) return null
-    const end      = parseHours(s.schedule?.recurring?.end_time)
-    const duration = (end !== null && end > start) ? end - start : 0.75
-    return {
-      top:    Math.round((start - GRID_START) * HOUR_H),
-      height: Math.max(Math.round(duration * HOUR_H), 36),
-      short:  duration * HOUR_H < 46,
-    }
+  // GAP between side-by-side columns in px
+  const COL_GAP = 3
+
+  function eventStyle(ev) {
+    const duration = ev.end - ev.start
+    const top    = Math.round((ev.start - GRID_START) * HOUR_H)
+    const height = Math.max(Math.round(duration * HOUR_H), 36)
+    const short  = height < 46
+    const n = ev.totalCols, c = ev.col
+    // math: left = c*(W+gap)/n, width = (W - gap*(n-1))/n  where W=100%
+    const left  = n > 1 ? `calc(${c} * (100% + ${COL_GAP}px) / ${n})` : '0%'
+    const width = n > 1 ? `calc((100% - ${COL_GAP * (n - 1)}px) / ${n})` : '100%'
+    return { top, height, short, left, width }
   }
 
   // ── Navigation ─────────────────────────────────────────────
@@ -394,34 +450,114 @@
         {/if}
 
         <!-- Events -->
-        {#each sessionsForDay as session}
-          {@const ev   = eventStyle(session)}
-          {@const cat  = getCategoryName(session.category)}
-          {@const col  = catColor(cat)}
-          {@const bg   = hexToRgba(col, 0.14)}
-          {#if ev}
+        <div class="events-container">
+          {#each layout as ev}
+            {@const style = eventStyle(ev)}
+            {@const cat   = getCategoryName(ev.session.category)}
+            {@const col   = catColor(cat)}
+            {@const bg    = hexToRgba(col, 0.14)}
             <div
               class="event-block"
-              class:event-short={ev.short}
-              style="top:{ev.top}px; height:{ev.height}px; border-left-color:{col}; background:{bg}"
+              class:event-short={style.short}
+              style="top:{style.top}px; height:{style.height}px; left:{style.left}; width:{style.width}; border-left-color:{col}; background:{bg}"
+              onclick={() => selectedSession = ev.session}
+              role="button"
+              tabindex="0"
+              onkeydown={(e) => e.key === 'Enter' && (selectedSession = ev.session)}
             >
-              <p class="ev-title">{session.title}</p>
-              {#if !ev.short}
+              <p class="ev-title">{ev.session.title}</p>
+              {#if !style.short}
                 <p class="ev-meta">
-                  {fmtTime(session.schedule.recurring.start_time)}
-                  {#if session.schedule.recurring.end_time}
-                    · {fmtDuration(session.schedule.recurring.start_time, session.schedule.recurring.end_time)}
+                  {fmtTime(ev.session.schedule.recurring.start_time)}
+                  {#if ev.session.schedule.recurring.end_time}
+                    · {fmtDuration(ev.session.schedule.recurring.start_time, ev.session.schedule.recurring.end_time)}
                   {/if}
                 </p>
               {/if}
             </div>
-          {/if}
-        {/each}
+          {/each}
+        </div>
 
       </div>
     {/if}
   </div>
 </div>
+
+<!-- ── SESSION DETAIL MODAL ──────────────────────────────── -->
+{#if selectedSession}
+  {@const cat   = getCategoryName(selectedSession.category)}
+  {@const col   = catColor(cat)}
+  {@const bg    = hexToRgba(col, 0.08)}
+  <div class="overlay" onclick={() => selectedSession = null} onkeydown={(e) => e.key === 'Escape' && (selectedSession = null)} role="dialog" aria-modal="true" aria-label="Session details" tabindex="-1">
+    <div class="sheet" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.stopPropagation()} role="document">
+      <div class="sheet-handle" aria-hidden="true"></div>
+      <button class="sheet-close" onclick={() => selectedSession = null} aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <path d="M18 6L6 18M6 6l12 12"/>
+        </svg>
+      </button>
+
+      <div class="sheet-header" style="background:linear-gradient(180deg,{bg},transparent)">
+        <span class="cat-tag" style="color:{col}; background:{hexToRgba(col, 0.13)}">{cat}</span>
+        <h2 class="sheet-title">{selectedSession.title}</h2>
+        {#if selectedSession.lecturer}
+          <p class="sheet-lecturer">{selectedSession.lecturer}</p>
+        {/if}
+      </div>
+
+      <div class="sheet-body">
+        {#if selectedSession.summary || selectedSession.about}
+          <p class="sheet-summary">{selectedSession.summary || selectedSession.about}</p>
+        {/if}
+
+        <div class="detail-grid">
+          <div class="detail-row">
+            <span class="detail-label">Days</span>
+            <span class="detail-val">{getDaysFull(selectedSession.schedule) || '—'}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Time</span>
+            <span class="detail-val">
+              {fmtTime(selectedSession.schedule?.recurring?.start_time) || '—'}
+              {#if selectedSession.schedule?.recurring?.end_time}
+                – {fmtTime(selectedSession.schedule.recurring.end_time)}
+                <span class="dur-chip">{fmtDuration(selectedSession.schedule.recurring.start_time, selectedSession.schedule.recurring.end_time)}</span>
+              {/if}
+            </span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Mode</span>
+            <span class="detail-val">{selectedSession.schedule?.mode || 'Online'}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Language</span>
+            <span class="detail-val" style="text-transform:capitalize">{selectedSession.language || '—'}</span>
+          </div>
+          {#if selectedSession.subcategory}
+            <div class="detail-row">
+              <span class="detail-label">Topic</span>
+              <span class="detail-val">{selectedSession.subcategory}</span>
+            </div>
+          {/if}
+        </div>
+
+        {#if selectedSession.schedule?.onlineLinks?.length}
+          <div class="join-section">
+            <p class="join-label">Join Links</p>
+            <div class="join-links">
+              {#each selectedSession.schedule.onlineLinks as link}
+                <a href={link.link} target="_blank" rel="noopener noreferrer" class="join-btn">
+                  <span class="join-platform">{link.platform}</span>
+                  <span>Join {link.platform} →</span>
+                </a>
+              {/each}
+            </div>
+          </div>
+        {/if}
+      </div>
+    </div>
+  </div>
+{/if}
 
 <style>
   /* ── Layout shell ── */
@@ -623,20 +759,34 @@
     background: #ef4444;
   }
 
-  /* ── Event blocks ── */
-  .event-block {
+  /* ── Events container (within time-grid) ── */
+  .events-container {
     position: absolute;
     left: 56px;
     right: 8px;
+    top: 0;
+    bottom: 0;
+    pointer-events: none; /* children re-enable */
+  }
+
+  /* ── Event blocks ── */
+  .event-block {
+    position: absolute;
     border-radius: 8px;
     border-left: 3px solid;
     padding: 6px 9px 4px;
     overflow: hidden;
     cursor: pointer;
-    transition: filter .15s;
+    pointer-events: all;
+    transition: filter .15s, box-shadow .15s;
     z-index: 2;
+    box-sizing: border-box;
   }
-  .event-block:hover { filter: brightness(1.15); }
+  .event-block:hover {
+    filter: brightness(1.18);
+    box-shadow: 0 4px 16px rgba(0,0,0,.35);
+    z-index: 3;
+  }
   .event-block.event-short { padding: 4px 8px; }
 
   .ev-title {
@@ -713,6 +863,122 @@
     font-size: 0.68rem; font-weight: 600;
     border-radius: 999px;
     padding: 0 5px;
+  }
+
+  /* ── Session detail modal ── */
+  .overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,.72);
+    display: flex; align-items: flex-end; justify-content: center;
+    z-index: 200;
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    animation: fadeIn .18s ease;
+  }
+  .sheet {
+    background: #0C1827;
+    width: 100%; max-width: 600px;
+    border-radius: 24px 24px 0 0;
+    max-height: 88vh;
+    overflow-y: auto;
+    position: relative;
+    animation: slideUp .32s cubic-bezier(.22,1,.36,1);
+    border: 1px solid rgba(237,229,216,.08);
+    border-bottom: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .sheet-handle {
+    width: 36px; height: 4px;
+    background: rgba(237,229,216,.12); border-radius: 2px;
+    margin: .875rem auto 0;
+  }
+  .sheet-close {
+    position: absolute; top: 1rem; right: 1rem;
+    width: 32px; height: 32px;
+    background: rgba(237,229,216,.06);
+    border: 1px solid rgba(237,229,216,.08);
+    border-radius: 50%; color: rgba(237,229,216,.6);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: background .15s, color .15s; z-index: 10;
+  }
+  .sheet-close:hover { background: rgba(237,229,216,.12); color: #EDE5D8; }
+  .sheet-close svg { width: 14px; height: 14px; }
+
+  .sheet-header {
+    padding: 1.25rem 1.25rem .875rem;
+    border-bottom: 1px solid rgba(237,229,216,.08);
+  }
+  .cat-tag {
+    display: inline-flex; align-items: center;
+    padding: .18rem .5rem; border-radius: 999px;
+    font-size: .62rem; font-weight: 600;
+    letter-spacing: .04em; text-transform: uppercase;
+  }
+  .sheet-title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.4rem; font-weight: 500;
+    line-height: 1.25; letter-spacing: -.02em;
+    color: #EDE5D8; margin: .5rem 0 .3rem;
+  }
+  .sheet-lecturer { font-size: .9rem; color: #4BBFAD; margin: 0; }
+
+  .sheet-body { padding: 1.25rem; }
+  .sheet-summary {
+    font-size: .875rem; color: rgba(237,229,216,.6);
+    line-height: 1.65; margin-bottom: 1.25rem;
+  }
+
+  .detail-grid {
+    background: rgba(237,229,216,.04);
+    border: 1px solid rgba(237,229,216,.08);
+    border-radius: 14px; overflow: hidden;
+    margin-bottom: 1.25rem;
+  }
+  .detail-row {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    gap: 1rem; padding: .7rem 1rem;
+    border-bottom: 1px solid rgba(237,229,216,.06);
+  }
+  .detail-row:last-child { border-bottom: none; }
+  .detail-label { font-size: .78rem; color: rgba(237,229,216,.35); flex-shrink: 0; }
+  .detail-val   { font-size: .85rem; color: #EDE5D8; font-weight: 500; text-align: right; }
+  .dur-chip {
+    display: inline-block;
+    margin-left: .4rem;
+    background: rgba(237,229,216,.08);
+    border-radius: 4px; padding: 0 .35rem;
+    font-size: .72rem; color: rgba(237,229,216,.5);
+    vertical-align: middle;
+  }
+
+  .join-section { margin-bottom: 1rem; }
+  .join-label {
+    font-size: .7rem; text-transform: uppercase; letter-spacing: .08em;
+    color: rgba(237,229,216,.35); font-weight: 600; margin-bottom: .625rem;
+  }
+  .join-links { display: flex; flex-direction: column; gap: .5rem; }
+  .join-btn {
+    display: flex; align-items: center; gap: .75rem;
+    padding: .75rem 1rem;
+    background: rgba(200,146,42,.12);
+    border: 1px solid rgba(200,146,42,.2);
+    border-radius: 14px; color: #EDE5D8;
+    text-decoration: none; font-size: .875rem; font-weight: 500;
+    transition: background .15s;
+  }
+  .join-btn:hover { background: rgba(200,146,42,.18); }
+  .join-platform {
+    font-size: .68rem; color: #C8922A;
+    font-weight: 600; text-transform: uppercase;
+    letter-spacing: .05em; min-width: 56px;
+  }
+
+  @keyframes fadeIn  { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes slideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+
+  @media (min-width: 768px) {
+    .sheet { border-radius: 24px; }
+    .overlay { align-items: center; padding: 1rem; }
   }
 
   /* ── Loading skeleton ── */

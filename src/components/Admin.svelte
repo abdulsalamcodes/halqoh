@@ -189,7 +189,8 @@
         `${SUPABASE_URL}/rest/v1/halqahs?id=eq.${deleteTarget.id}`,
         { method: 'DELETE', headers: writeHeaders() }
       )
-      if (!res.ok) throw new Error('Delete failed')
+      const body = res.headers.get('content-length') !== '0' ? await res.text() : ''
+      if (!res.ok) throw new Error(`Delete failed (${res.status}): ${body}`)
       deleteTarget = null
       editing = null
       await fetchSessions()
@@ -262,12 +263,15 @@
 
 <!-- ── DELETE CONFIRM ─────────────────────────────────── -->
 {:else if deleteTarget}
-  <div class="overlay" onclick={() => deleteTarget = null}>
+  <div class="overlay" onclick={() => { deleteTarget = null; errorMsg = '' }}>
     <div class="confirm-card" onclick={(e) => e.stopPropagation()}>
       <p class="confirm-title">Delete session?</p>
       <p class="confirm-body">"{deleteTarget.title}" will be permanently removed. This cannot be undone.</p>
+      {#if errorMsg}
+        <div class="alert alert-error">{errorMsg}</div>
+      {/if}
       <div class="confirm-actions">
-        <button class="btn-ghost" onclick={() => deleteTarget = null} disabled={saving}>Cancel</button>
+        <button class="btn-ghost" onclick={() => { deleteTarget = null; errorMsg = '' }} disabled={saving}>Cancel</button>
         <button class="btn-danger" onclick={confirmDelete} disabled={saving}>
           {saving ? 'Deleting…' : 'Yes, delete'}
         </button>

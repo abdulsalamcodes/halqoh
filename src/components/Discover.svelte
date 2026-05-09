@@ -5,12 +5,7 @@
 
   let halqahs = $state([])
   let loading = $state(true)
-  let loadingMore = $state(false)
   let error = $state(null)
-  let currentPage = $state(1)
-  let totalCount = $state(0)
-  const PAGE_SIZE = 15
-  const SEARCH_PAGE_SIZE = 1000
   let searchQuery = $state('')
   let isSearching = $state(false)
   let selectedCategory = $state('All Categories')
@@ -37,62 +32,26 @@
   console.log('API_KEY:', API_KEY ? 'loaded' : 'missing')
   console.log('SUPABASE_URL:', SUPABASE_URL)
 
-  async function fetchHalqahs(reset = false) {
+  async function fetchHalqahs() {
     try {
-      if (reset) {
-        currentPage = 1
-        halqahs = []
-      }
-      
-      isSearching = searchQuery.length > 0
       loading = true
       error = null
-      
+      isSearching = searchQuery.length > 0
+
       const filters = getFilterParams()
       const filterParam = filters ? `&${filters}` : ''
-      const limit = isSearching ? SEARCH_PAGE_SIZE : PAGE_SIZE
-      const offset = isSearching ? 0 : (currentPage - 1) * PAGE_SIZE
-      
-      const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&limit=${limit}&offset=${offset}&order=created_at.desc${filterParam}`
-      console.log('Fetching halqahs:', url)
-      
+      const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&order=created_at.desc${filterParam}`
+
       const response = await fetch(url, {
         headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY },
       })
       if (!response.ok) { error = 'Could not load sessions (HTTP ' + response.status + ')'; loading = false; return }
-      const data = await response.json()
-      console.log('Data received:', data.length)
-      halqahs = reset || isSearching ? data : [...halqahs, ...data]
-      totalCount = data.length
-      if (reset) loadSavedSessions()
+      halqahs = await response.json()
+      loadSavedSessions()
     } catch (e) {
       console.error('Fetch error:', e)
       error = e.message
     } finally { loading = false }
-  }
-
-  let countFetched = $state(false)
-
-  async function fetchCount() {
-    try {
-      const url = `${SUPABASE_URL}/rest/v1/halqahs?status=eq.published&select=id`
-      const response = await fetch(url, {
-        headers: { 'apikey': API_KEY, 'Authorization': 'Bearer ' + API_KEY },
-      })
-      if (response.ok) {
-        const data = await response.json()
-        totalCount = data.length
-        countFetched = true
-      }
-    } catch (e) { console.error('fetchCount error:', e) }
-  }
-
-  async function loadMore() {
-    if (loadingMore || halqahs.length < PAGE_SIZE || isSearching) return
-    currentPage++
-    loadingMore = true
-    await fetchHalqahs(false)
-    loadingMore = false
   }
 
   function loadSavedSessions() {
@@ -120,11 +79,11 @@
 
   function getDayIndex(day) { return dayOptions.indexOf(day) }
 
-  let filteredHalqahs = $derived(() => {
+  let filteredHalqahs = $derived.by(() => {
     console.log('Filtering:', halqahs.length, 'items')
     if (isSearching) return halqahs
     return halqahs.filter(h => {
-      const matchesSearch = !searchQuery || 
+      const matchesSearch = !searchQuery ||
         h.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
         h.lecturer?.toLowerCase().includes(searchQuery.toLowerCase())
       const matchesCategory = selectedCategory === 'All Categories' || getCategoryName(h.category) === selectedCategory
@@ -151,13 +110,6 @@
     if (!start && !end) return ''
     if (!start || !end) return start || end
     return start + ' – ' + end
-  }
-
-  function hasMore() {
-    if (isSearching) return false
-    if (loadingMore) return false
-    if (countFetched && totalCount > 0) return halqahs.length < totalCount
-    return halqahs.length >= PAGE_SIZE
   }
 
   async function requestNotificationPermission() {
@@ -200,6 +152,31 @@
     })
   }
 
+  function getFilterParams() {
+    const parts = []
+    if (searchQuery) parts.push(`or=(title.ilike.*${encodeURIComponent(searchQuery)}*,lecturer.ilike.*${encodeURIComponent(searchQuery)}*)`)
+    if (selectedLanguage !== 'All Languages') parts.push(`language=eq.${encodeURIComponent(selectedLanguage)}`)
+    return parts.join('&')
+  }
+
+  function catColor(cat) {
+    const map = {
+      'Quran Studies':       '#4BBFAD',
+      'Hadith Explanations': '#C8922A',
+      'Islamic Law':         '#7B68EE',
+      'Spirituality':        '#E8A0BF',
+      'Language':            '#6CB4E4',
+    }
+    return map[cat] || '#C8922A'
+  }
+
+  function getUniqueLecturers() {
+    const seen = new Set()
+    return halqahs
+      .map(h => h.lecturer)
+      .filter(l => l && !seen.has(l) && seen.add(l))
+  }
+
   function clearFilters() {
     selectedCategory = 'All Categories'
     selectedDay = 'All Days'
@@ -215,20 +192,28 @@
   )
 
   onMount(() => {
-    Promise.all([fetchHalqahs(true), fetchCount()])
-    
+    fetchHalqahs()
+
+    function onVisible() {
+      if (document.visibilityState === 'visible') fetchHalqahs()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+
     try {
       const saved = localStorage.getItem('sessionReminders')
       sessionReminders = saved ? JSON.parse(saved) : {}
     } catch {}
-    
+
     if ('Notification' in window) {
       notificationsEnabled = Notification.permission === 'granted'
     }
-    
+
     checkReminders()
     const interval = setInterval(checkReminders, 60000)
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   })
 </script>
 
@@ -275,7 +260,7 @@
   <div class="search-row">
     <div class="search-bar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>
-      <input type="text" placeholder="Search..." bind:value={searchQuery} oninput={() => fetchHalqahs(true)} />
+      <input type="text" placeholder="Search..." bind:value={searchQuery} oninput={() => fetchHalqahs()} />
       {#if searchQuery}<button class="clear" onclick={() => searchQuery = ''}>×</button>{/if}
     </div>
     <button
@@ -294,7 +279,7 @@
     </button>
   </div>
 
-  {#if !filtersCollapsed}
+  {#if filtersOpen}
     <div class="filters">
       <select bind:value={selectedCategory}>
         {#each categories as cat}<option value={cat}>{cat}</option>{/each}
@@ -311,11 +296,11 @@
           <option value={lecturer}>{lecturer.length > 20 ? lecturer.slice(0, 20) + '...' : lecturer}</option>
         {/each}
       </select>
-      {#if hasActiveFilters()}<button class="clear-btn" onclick={clearFilters}>Clear</button>{/if}
+      {#if hasActiveFilters}<button class="clear-btn" onclick={clearFilters}>Clear</button>{/if}
     </div>
     {#if !loading && halqahs.length > 0}
       <div class="results-count">
-        {hasActiveFilters() ? `Showing ${filteredHalqahs().length} of ${halqahs.length}` : `${halqahs.length} sessions available`}
+        {hasActiveFilters ? `Showing ${filteredHalqahs.length} of ${halqahs.length}` : `${halqahs.length} sessions available`}
       </div>
     {/if}
   {/if}
@@ -352,7 +337,7 @@
       <div class="empty-state">
         <p class="empty-icon">⚠</p>
         <p class="empty-label">{error}</p>
-        <button class="cta-btn" onclick={() => fetchHalqahs(true)}>Try again</button>
+        <button class="cta-btn" onclick={() => fetchHalqahs()}>Try again</button>
       </div>
 
     {:else if filteredHalqahs.length === 0}
@@ -419,13 +404,6 @@
         {/each}
       </div>
 
-      {#if loadingMore}
-        <div class="load-more-wrap">
-          <span class="dot-loader"><i></i><i></i><i></i></span>
-        </div>
-      {:else if hasMore()}
-        <button class="load-more-btn" onclick={loadMore}>Load more sessions</button>
-      {/if}
     {/if}
   </main>
 
@@ -744,14 +722,14 @@
   .hero-sub { font-size: .88rem; color: var(--c60); line-height: 1.5; }
 
   /* ── Search ── */
-  .search-wrap {
+  .search-wrap, .search-row {
     padding: 0 1.25rem .875rem;
     display: flex;
     gap: .5rem;
     align-items: center;
   }
 
-  .search-field {
+  .search-field, .search-bar {
     flex: 1;
     display: flex;
     align-items: center;
@@ -764,14 +742,14 @@
     transition: border-color .2s, background .2s;
     min-width: 0;
   }
-  .search-field:focus-within {
+  .search-field:focus-within, .search-bar:focus-within {
     border-color: var(--gold);
     background: rgba(200,146,42,.06);
   }
-  .search-field > svg { width: 17px; height: 17px; color: var(--c30); flex-shrink: 0; transition: color .2s; }
-  .search-field:focus-within > svg { color: var(--gold); }
+  .search-field > svg, .search-bar > svg { width: 17px; height: 17px; color: var(--c30); flex-shrink: 0; transition: color .2s; }
+  .search-field:focus-within > svg, .search-bar:focus-within > svg { color: var(--gold); }
 
-  .search-field input {
+  .search-field input, .search-bar input {
     flex: 1; min-width: 0;
     background: none; border: none;
     color: var(--cream);
@@ -779,7 +757,7 @@
     font-size: .875rem;
     outline: none;
   }
-  .search-field input::placeholder { color: var(--c30); }
+  .search-field input::placeholder, .search-bar input::placeholder { color: var(--c30); }
 
   .search-spinner {
     width: 14px;
@@ -799,6 +777,48 @@
   }
   .search-clear:hover { color: var(--cream); }
   .search-clear svg { width: 14px; height: 14px; }
+
+  /* ── Filter panel (select-based) ── */
+  .filters {
+    padding: 0 1.25rem .875rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+  }
+  .filters select {
+    flex: 1;
+    min-width: 140px;
+    background: var(--c06);
+    border: 1.5px solid var(--border);
+    border-radius: 10px;
+    color: var(--cream);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .8rem;
+    padding: .5rem .75rem;
+    outline: none;
+    cursor: pointer;
+  }
+  .filters select:focus { border-color: var(--gold); }
+
+  .clear-btn {
+    padding: .5rem 1rem;
+    background: var(--gold-dim);
+    border: 1px solid rgba(200,146,42,.3);
+    border-radius: 10px;
+    color: var(--gold);
+    font-family: 'Sora', system-ui, sans-serif;
+    font-size: .8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .clear-btn:hover { background: rgba(200,146,42,.2); }
+
+  .results-count {
+    padding: 0 1.25rem .5rem;
+    font-size: .75rem;
+    color: var(--c30);
+  }
 
   /* ── Filter toggle button ── */
   .filter-toggle {
