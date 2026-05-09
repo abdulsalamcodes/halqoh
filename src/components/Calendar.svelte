@@ -4,12 +4,13 @@
   const API_KEY    = import.meta.env.VITE_SUPABASE_ANON_KEY || ''
   const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || ''
 
-  const GRID_START  = 6    // 6 am
-  const GRID_END    = 23   // 11 pm
-  const HOUR_H      = 64   // px per hour
-  const HOURS       = Array.from({ length: GRID_END - GRID_START + 1 }, (_, i) => i + GRID_START)
-  const GRID_H      = (GRID_END - GRID_START + 1) * HOUR_H  // total grid px
+  const GRID_START = 6
+  const GRID_END   = 23
+  const HOUR_H     = 64
+  const HOURS      = Array.from({ length: GRID_END - GRID_START + 1 }, (_, i) => i + GRID_START)
+  const GRID_H     = (GRID_END - GRID_START + 1) * HOUR_H
   const SWIPE_THRESHOLD = 55
+  const COL_GAP    = 3   // px gap between side-by-side events
 
   const CAT_COLOR = {
     'Quran Studies':       '#4ADE80',
@@ -19,21 +20,23 @@
     'Language':            '#F472B6',
     'General':             '#94A3B8',
   }
-
   const DAY_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const DAY_FULL  = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
   // ── State ──────────────────────────────────────────────────
-  let halqahs     = $state([])
-  let loading     = $state(true)
-  let currentDate = $state(new Date())
-  let now         = $state(new Date())
-  let scrollEl    = $state(null)
+  let halqahs        = $state([])
+  let loading        = $state(true)
+  let currentDate    = $state(new Date())
+  let now            = $state(new Date())
+  let scrollEl       = $state(null)
+  let selectedSession = $state(null)
+  let savedSessions  = $state([])
 
-  // Swipe state (plain vars, not reactive — only dragOffset drives the UI)
+  // Swipe (plain vars — only dragOffset/isAnimating drive UI)
   let pStartX = 0, pStartY = 0
   let isDragging = false, swipeDetected = false
-  let dragOffset   = $state(0)
-  let isAnimating  = $state(false)
+  let dragOffset  = $state(0)
+  let isAnimating = $state(false)
 
   // ── Data ───────────────────────────────────────────────────
   async function fetchHalqahs() {
@@ -45,10 +48,24 @@
       if (!res.ok) throw new Error('HTTP ' + res.status)
       halqahs = await res.json()
     } catch (e) {
-      console.error('Calendar fetch error:', e)
+      console.error('Calendar fetch:', e)
     } finally {
       loading = false
     }
+  }
+
+  function loadSaved() {
+    try { savedSessions = JSON.parse(localStorage.getItem('savedSessions') || '[]') }
+    catch { savedSessions = [] }
+  }
+
+  function isSaved(id) { return savedSessions.includes(id) }
+
+  function toggleSave(session) {
+    savedSessions = isSaved(session.id)
+      ? savedSessions.filter(id => id !== session.id)
+      : [...savedSessions, session.id]
+    localStorage.setItem('savedSessions', JSON.stringify(savedSessions))
   }
 
   // ── Helpers ────────────────────────────────────────────────
@@ -56,7 +73,6 @@
     if (!cat) return 'General'
     try { return JSON.parse(cat).name || 'General' } catch { return 'General' }
   }
-
   function catColor(cat) { return CAT_COLOR[cat] || CAT_COLOR['General'] }
 
   function hexToRgba(hex, alpha) {
@@ -89,12 +105,22 @@
 
   function fmtDuration(start, end) {
     const s = parseHours(start), e = parseHours(end)
-    if (s === null || e === null) return ''
+    if (s === null || e === null || e <= s) return ''
     const mins = Math.round((e - s) * 60)
-    if (mins <= 0) return ''
     if (mins < 60) return `${mins} min`
     const h = Math.floor(mins / 60), m = mins % 60
     return m ? `${h}h ${m}m` : `${h}h`
+  }
+
+  function getDaysFull(sched) {
+    return (sched?.recurring?.days || []).map(d => DAY_FULL[d]).join(', ')
+  }
+
+  function getTimeRange(sched) {
+    const s = sched?.recurring?.start_time
+    const e = sched?.recurring?.end_time
+    if (!s) return '—'
+    return e ? `${fmtTime(s)} – ${fmtTime(e)}` : fmtTime(s)
   }
 
   function isToday(d) {
@@ -111,8 +137,8 @@
   // ── Derived ────────────────────────────────────────────────
   let dayIndex = $derived(currentDate.getDay())
 
-  let sessionsForDay = $derived.by(() => {
-    return halqahs
+  let sessionsForDay = $derived.by(() =>
+    halqahs
       .filter(h =>
         (h.schedule?.recurring?.days || []).includes(dayIndex) &&
         h.schedule?.recurring?.start_time
@@ -121,7 +147,7 @@
         (parseHours(a.schedule.recurring.start_time) || 0) -
         (parseHours(b.schedule.recurring.start_time) || 0)
       )
-  })
+  )
 
   let nowLineStyle = $derived.by(() => {
     if (!isToday(currentDate)) return null
@@ -130,17 +156,66 @@
     return `top:${(h - GRID_START) * HOUR_H}px`
   })
 
-  // ── Event positioning ──────────────────────────────────────
-  function eventStyle(s) {
-    const start = parseHours(s.schedule?.recurring?.start_time)
-    if (start === null || start < GRID_START || start > GRID_END) return null
-    const end      = parseHours(s.schedule?.recurring?.end_time)
-    const duration = (end !== null && end > start) ? end - start : 0.75
-    return {
-      top:    Math.round((start - GRID_START) * HOUR_H),
-      height: Math.max(Math.round(duration * HOUR_H), 36),
-      short:  duration * HOUR_H < 46,
+  // ── Overlap layout ─────────────────────────────────────────
+  // Returns events with col + totalCols assigned so overlapping
+  // events render side by side instead of on top of each other.
+  let layoutedEvents = $derived.by(() => {
+    const sessions = sessionsForDay
+    if (!sessions.length) return []
+
+    const evs = sessions.map(s => {
+      const start = parseHours(s.schedule?.recurring?.start_time) ?? 0
+      const rawEnd = parseHours(s.schedule?.recurring?.end_time)
+      const end = (rawEnd !== null && rawEnd > start) ? rawEnd : start + 0.75
+      const top    = Math.round((start - GRID_START) * HOUR_H)
+      const height = Math.max(Math.round((end - start) * HOUR_H), 36)
+      return { session: s, start, end, top, height, short: height < 46, col: 0, totalCols: 1 }
+    })
+
+    // Greedy column assignment (events already sorted by start)
+    const colEnds = []   // colEnds[c] = end time of last event placed in column c
+    for (const ev of evs) {
+      let placed = false
+      for (let c = 0; c < colEnds.length; c++) {
+        if (colEnds[c] <= ev.start + 0.01) {
+          ev.col = c
+          colEnds[c] = ev.end
+          placed = true
+          break
+        }
+      }
+      if (!placed) {
+        ev.col = colEnds.length
+        colEnds.push(ev.end)
+      }
     }
+
+    // Assign totalCols = highest col index among all overlapping peers + 1
+    for (let i = 0; i < evs.length; i++) {
+      let maxCol = evs[i].col
+      for (let j = 0; j < evs.length; j++) {
+        if (i !== j && evs[j].start < evs[i].end && evs[j].end > evs[i].start) {
+          maxCol = Math.max(maxCol, evs[j].col)
+        }
+      }
+      evs[i].totalCols = maxCol + 1
+    }
+
+    return evs
+  })
+
+  // Build inline style for each event block using CSS calc()
+  // Events area: left=56px, right=8px  →  available width = 100% - 64px
+  function evBlockStyle(ev) {
+    const { col, totalCols, top, height } = ev
+    const area  = `(100% - 64px)`
+    const gap   = COL_GAP
+    const avail = `(${area} - ${gap * (totalCols - 1)}px)`
+    const left  = `calc(56px + ${col} * (${avail} / ${totalCols} + ${gap}px))`
+    const width = `calc(${avail} / ${totalCols})`
+    const col_  = catColor(getCategoryName(ev.session.category))
+    const bg    = hexToRgba(col_, 0.14)
+    return `top:${top}px; height:${height}px; left:${left}; width:${width}; border-left-color:${col_}; background:${bg}`
   }
 
   // ── Navigation ─────────────────────────────────────────────
@@ -149,62 +224,49 @@
     d.setDate(d.getDate() + delta)
     currentDate = d
   }
-
-  function goToday() { currentDate = new Date() }
-
   function prevDay() { shiftDay(-1) }
   function nextDay() { shiftDay(+1) }
+  function goToday() { currentDate = new Date() }
 
   // ── Auto-scroll ────────────────────────────────────────────
   function scrollToTime() {
     if (!scrollEl) return
     requestAnimationFrame(() => {
       const sessions = sessionsForDay
-      let targetH
+      let targetH = null
       if (sessions.length > 0) {
         const first = parseHours(sessions[0].schedule?.recurring?.start_time)
-        targetH = first !== null ? first - 0.75 : null
+        if (first !== null) targetH = first - 0.75
       }
       if (targetH === null && isToday(currentDate)) {
         const n = new Date()
         targetH = n.getHours() + n.getMinutes() / 60 - 0.75
       }
       if (targetH !== null) {
-        const top = Math.max(0, (targetH - GRID_START) * HOUR_H)
-        scrollEl.scrollTo({ top, behavior: 'smooth' })
+        scrollEl.scrollTo({ top: Math.max(0, (targetH - GRID_START) * HOUR_H), behavior: 'smooth' })
       }
     })
   }
-
-  // Re-scroll whenever day changes
-  $effect(() => {
-    currentDate   // track dependency
-    scrollToTime()
-  })
+  $effect(() => { currentDate; scrollToTime() })
 
   // ── Swipe gesture ──────────────────────────────────────────
   function onPtrDown(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return
-    pStartX = e.clientX
-    pStartY = e.clientY
-    isDragging    = true
-    swipeDetected = false
-    dragOffset    = 0
-    isAnimating   = false
+    pStartX = e.clientX; pStartY = e.clientY
+    isDragging = true; swipeDetected = false
+    dragOffset = 0; isAnimating = false
   }
 
   function onPtrMove(e) {
     if (!isDragging || isAnimating) return
-    const dx = e.clientX - pStartX
-    const dy = e.clientY - pStartY
-
+    const dx = e.clientX - pStartX, dy = e.clientY - pStartY
     if (!swipeDetected) {
       if (Math.abs(dx) < 10 && Math.abs(dy) < 10) return
       if (Math.abs(dx) > Math.abs(dy)) {
         swipeDetected = true
         e.currentTarget.setPointerCapture(e.pointerId)
       } else {
-        isDragging = false   // let browser scroll vertically
+        isDragging = false
         return
       }
     }
@@ -216,42 +278,35 @@
     isDragging = false
     if (!swipeDetected) return
     swipeDetected = false
-
     const dx = e.clientX - pStartX
     if (Math.abs(dx) > SWIPE_THRESHOLD) {
       const W = window.innerWidth
-      // Slide current content off-screen
-      isAnimating = true
-      dragOffset  = dx < 0 ? -W : W
+      isAnimating = true; dragOffset = dx < 0 ? -W : W
       setTimeout(() => {
         isAnimating = false
         dx < 0 ? nextDay() : prevDay()
-        // Snap opposite side instantly, then slide to centre
         dragOffset = dx < 0 ? W : -W
         requestAnimationFrame(() => {
-          isAnimating = true
-          dragOffset  = 0
+          isAnimating = true; dragOffset = 0
           setTimeout(() => { isAnimating = false }, 280)
         })
       }, 230)
     } else {
-      // Snap back
-      isAnimating = true
-      dragOffset  = 0
+      isAnimating = true; dragOffset = 0
       setTimeout(() => { isAnimating = false }, 200)
     }
   }
 
   function onPtrCancel() {
     isDragging = swipeDetected = false
-    isAnimating = true
-    dragOffset  = 0
+    isAnimating = true; dragOffset = 0
     setTimeout(() => { isAnimating = false }, 200)
   }
 
   // ── Mount ──────────────────────────────────────────────────
   onMount(() => {
     fetchHalqahs()
+    loadSaved()
     const tick = setInterval(() => { now = new Date() }, 60_000)
     return () => clearInterval(tick)
   })
@@ -267,8 +322,7 @@
   </a>
   <a href="/calendar.html" class="bnav-item active" aria-current="page">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <rect x="3" y="4" width="18" height="18" rx="2"/>
-      <path d="M16 2v4M8 2v4M3 10h18"/>
+      <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
     </svg>
     <span>Calendar</span>
   </a>
@@ -283,42 +337,31 @@
 <!-- ── DAY HEADER ─────────────────────────────────────────── -->
 <header class="day-header">
   <button class="arrow-btn" onclick={prevDay} aria-label="Previous day">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-      <path d="M15 18l-6-6 6-6"/>
-    </svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
   </button>
-
   <div class="header-centre">
     <p class="header-date">{fmtHeader(currentDate)}</p>
     {#if !isToday(currentDate)}
       <button class="today-chip" onclick={goToday}>Back to today</button>
     {/if}
   </div>
-
   <button class="arrow-btn" onclick={nextDay} aria-label="Next day">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-      <path d="M9 18l6-6-6-6"/>
-    </svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M9 18l6-6-6-6"/></svg>
   </button>
 </header>
 
 <!-- ── WEEK STRIP ─────────────────────────────────────────── -->
 <div class="week-strip">
   {#each DAY_SHORT as label, i}
-    {@const d = new Date(currentDate)}
-    {@const _ = d.setDate(d.getDate() - currentDate.getDay() + i)}
-    {@const isActive = i === currentDate.getDay()}
-    {@const isTod = isToday(d)}
+    {@const d = (() => { const nd = new Date(currentDate); nd.setDate(nd.getDate() - currentDate.getDay() + i); return nd })()}
     <button
       class="week-day"
-      class:active={isActive}
-      class:today={isTod}
+      class:active={i === currentDate.getDay()}
+      class:today={isToday(d)}
       onclick={() => { const nd = new Date(currentDate); nd.setDate(nd.getDate() - currentDate.getDay() + i); currentDate = nd }}
     >
       <span class="wd-label">{label}</span>
-      <span class="wd-dot-wrap">
-        {#if isTod}<span class="wd-today-dot"></span>{/if}
-      </span>
+      <span class="wd-dot-wrap">{#if isToday(d)}<span class="wd-today-dot"></span>{/if}</span>
     </button>
   {/each}
 </div>
@@ -337,35 +380,25 @@
     bind:this={scrollEl}
   >
 
-    <!-- Loading skeleton -->
     {#if loading}
       <div class="skel-wrap">
         {#each {length: 3} as _, i}
-          <div class="skel-event" style="top:{80 + i * 160}px; height:{90 + (i % 2) * 30}px; opacity:{1 - i * 0.2}"></div>
+          <div class="skel-event" style="top:{80 + i*160}px; height:{90+(i%2)*30}px; opacity:{1-i*0.2}"></div>
         {/each}
-        <div class="skel-axis">
-          {#each {length: 6} as _, i}
-            <div class="skel-hour" style="top:{i * 96}px"></div>
-          {/each}
-        </div>
+        <div class="skel-axis">{#each {length:6} as _,i}<div class="skel-hour" style="top:{i*96}px"></div>{/each}</div>
       </div>
 
-    <!-- Empty state -->
     {:else if sessionsForDay.length === 0}
       <div class="empty-day">
         <div class="empty-moon">☽</div>
         <p class="empty-title">No sessions today</p>
-        <p class="empty-sub">Swipe left or right to explore other days</p>
+        <p class="empty-sub">Swipe to explore other days</p>
         <div class="empty-days">
           {#each DAY_SHORT as label, i}
-            {@const nd = new Date(currentDate)}
-            {@const _ = nd.setDate(nd.getDate() - currentDate.getDay() + i)}
             {@const count = halqahs.filter(h => (h.schedule?.recurring?.days || []).includes(i)).length}
             {#if count > 0}
-              <button
-                class="empty-day-chip"
-                onclick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - currentDate.getDay() + i); currentDate = d }}
-              >
+              <button class="empty-day-chip"
+                onclick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - currentDate.getDay() + i); currentDate = d }}>
                 {label} <span class="chip-count">{count}</span>
               </button>
             {/if}
@@ -373,11 +406,9 @@
         </div>
       </div>
 
-    <!-- Time grid -->
     {:else}
       <div class="time-grid" style="height:{GRID_H}px">
 
-        <!-- Hour lines -->
         {#each HOURS as hour}
           <div class="hour-row" style="top:{(hour - GRID_START) * HOUR_H}px">
             <span class="hour-lbl">{fmtHour(hour)}</span>
@@ -385,37 +416,33 @@
           </div>
         {/each}
 
-        <!-- Now indicator -->
         {#if nowLineStyle}
           <div class="now-line" style={nowLineStyle}>
-            <span class="now-dot"></span>
-            <span class="now-bar"></span>
+            <span class="now-dot"></span><span class="now-bar"></span>
           </div>
         {/if}
 
-        <!-- Events -->
-        {#each sessionsForDay as session}
-          {@const ev   = eventStyle(session)}
-          {@const cat  = getCategoryName(session.category)}
-          {@const col  = catColor(cat)}
-          {@const bg   = hexToRgba(col, 0.14)}
-          {#if ev}
-            <div
-              class="event-block"
-              class:event-short={ev.short}
-              style="top:{ev.top}px; height:{ev.height}px; border-left-color:{col}; background:{bg}"
-            >
-              <p class="ev-title">{session.title}</p>
-              {#if !ev.short}
-                <p class="ev-meta">
-                  {fmtTime(session.schedule.recurring.start_time)}
-                  {#if session.schedule.recurring.end_time}
-                    · {fmtDuration(session.schedule.recurring.start_time, session.schedule.recurring.end_time)}
-                  {/if}
-                </p>
-              {/if}
-            </div>
-          {/if}
+        {#each layoutedEvents as ev}
+          {@const col = catColor(getCategoryName(ev.session.category))}
+          <div
+            class="event-block"
+            class:event-short={ev.short}
+            style={evBlockStyle(ev)}
+            onclick={() => selectedSession = ev.session}
+            role="button"
+            tabindex="0"
+            onkeydown={(e) => e.key === 'Enter' && (selectedSession = ev.session)}
+          >
+            <p class="ev-title">{ev.session.title}</p>
+            {#if !ev.short}
+              <p class="ev-meta" style="color:{col}">
+                {fmtTime(ev.session.schedule.recurring.start_time)}
+                {#if ev.session.schedule.recurring.end_time}
+                  · {fmtDuration(ev.session.schedule.recurring.start_time, ev.session.schedule.recurring.end_time)}
+                {/if}
+              </p>
+            {/if}
+          </div>
         {/each}
 
       </div>
@@ -423,316 +450,319 @@
   </div>
 </div>
 
+<!-- ── SESSION DETAIL SHEET ───────────────────────────────── -->
+{#if selectedSession}
+  {@const cat   = getCategoryName(selectedSession.category)}
+  {@const col   = catColor(cat)}
+  {@const saved = isSaved(selectedSession.id)}
+  <div class="overlay" onclick={() => selectedSession = null} role="dialog" aria-modal="true" aria-label="Session details">
+    <div class="sheet" onclick={(e) => e.stopPropagation()}>
+      <div class="sheet-handle"></div>
+      <button class="sheet-close" onclick={() => selectedSession = null} aria-label="Close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      </button>
+
+      <div class="sheet-header" style="--cat:{col}">
+        <span class="cat-tag" style="--cat:{col}">{cat}</span>
+        <h2 class="sheet-title">{selectedSession.title}</h2>
+        {#if selectedSession.lecturer}
+          <p class="sheet-lecturer">{selectedSession.lecturer}</p>
+        {/if}
+      </div>
+
+      <div class="sheet-body">
+        {#if selectedSession.summary || selectedSession.about}
+          <p class="sheet-summary">{selectedSession.summary || selectedSession.about}</p>
+        {/if}
+
+        <div class="detail-grid">
+          <div class="detail-row">
+            <span class="detail-label">Schedule</span>
+            <span class="detail-val">{getDaysFull(selectedSession.schedule) || '—'}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Time</span>
+            <span class="detail-val">{getTimeRange(selectedSession.schedule)}</span>
+          </div>
+          {#if selectedSession.schedule?.recurring?.start_time && selectedSession.schedule?.recurring?.end_time}
+            <div class="detail-row">
+              <span class="detail-label">Duration</span>
+              <span class="detail-val">{fmtDuration(selectedSession.schedule.recurring.start_time, selectedSession.schedule.recurring.end_time) || '—'}</span>
+            </div>
+          {/if}
+          <div class="detail-row">
+            <span class="detail-label">Mode</span>
+            <span class="detail-val">{selectedSession.schedule?.mode || 'Online'}</span>
+          </div>
+          <div class="detail-row">
+            <span class="detail-label">Language</span>
+            <span class="detail-val" style="text-transform:capitalize">{selectedSession.language || '—'}</span>
+          </div>
+          {#if selectedSession.subcategory}
+            <div class="detail-row">
+              <span class="detail-label">Topic</span>
+              <span class="detail-val">{selectedSession.subcategory}</span>
+            </div>
+          {/if}
+        </div>
+
+        {#if selectedSession.schedule?.onlineLinks?.length}
+          <div class="join-section">
+            <p class="join-label">Join Links</p>
+            <div class="join-links">
+              {#each selectedSession.schedule.onlineLinks as link}
+                <a href={link.link} target="_blank" rel="noopener noreferrer" class="join-btn" style="--cat:{col}">
+                  {link.platform} →
+                </a>
+              {/each}
+            </div>
+          </div>
+        {/if}
+
+        <button
+          class="save-btn-full"
+          class:saved
+          style="--cat:{col}"
+          onclick={() => toggleSave(selectedSession)}
+        >
+          <svg viewBox="0 0 24 24" fill={saved ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="2">
+            <path d="M19 21l-7-5-7 5V5a2 2 0 012-2h10a2 2 0 012 2v16z"/>
+          </svg>
+          {saved ? 'Saved ✓' : 'Save Session'}
+        </button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <style>
-  /* ── Layout shell ── */
-  :global(body) {
-    overflow: hidden;
-    height: 100dvh;
-  }
+  /* ── Shell ── */
+  :global(body) { overflow: hidden; height: 100dvh; }
   :global(#app) {
-    display: flex;
-    flex-direction: column;
-    height: 100dvh;
-    overflow: hidden;
-    background: var(--ink);
+    display: flex; flex-direction: column;
+    height: 100dvh; overflow: hidden; background: var(--ink);
   }
 
-  /* ── Bottom nav (matches other pages) ── */
+  /* ── Bottom nav ── */
   .bottom-nav {
-    display: flex;
-    position: fixed;
-    bottom: .875rem;
-    left: 50%;
+    display: flex; position: fixed; bottom: .875rem; left: 50%;
     transform: translateX(-50%);
     background: rgba(10,18,32,.94);
-    -webkit-backdrop-filter: blur(20px);
-    backdrop-filter: blur(20px);
-    border: 1px solid rgba(237,229,216,.07);
-    border-radius: 999px;
-    padding: .5rem .75rem;
-    gap: .25rem;
-    box-shadow: 0 8px 40px rgba(0,0,0,.5), inset 0 0 0 1px rgba(255,255,255,.04);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+    border: 1px solid rgba(237,229,216,.07); border-radius: 999px;
+    padding: .5rem .75rem; gap: .25rem;
+    box-shadow: 0 8px 40px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.04);
     z-index: 100;
   }
   .bnav-item {
     display: flex; flex-direction: column; align-items: center;
     gap: .18rem; padding: .4rem .875rem; border-radius: 40px;
-    font-family: 'Sora', system-ui, sans-serif;
-    font-size: .62rem; font-weight: 500;
-    color: rgba(237,229,216,.35);
-    text-decoration: none; border: none; background: none;
-    cursor: pointer; transition: color .2s, background .2s;
+    font-family: 'Sora',system-ui,sans-serif; font-size: .62rem; font-weight: 500;
+    color: rgba(237,229,216,.35); text-decoration: none; border: none; background: none;
+    cursor: pointer; transition: color .2s,background .2s;
   }
   .bnav-item svg { width: 19px; height: 19px; transition: transform .2s; }
-  .bnav-item:hover,
-  .bnav-item.active { color: var(--gold); background: var(--gold-dim); }
+  .bnav-item:hover,.bnav-item.active { color: var(--gold); background: var(--gold-dim); }
   .bnav-item.active svg { transform: scale(1.1); }
 
   /* ── Day header ── */
   .day-header {
-    display: flex;
-    align-items: center;
-    padding: 1rem 0.5rem 0.5rem;
-    gap: 0.25rem;
-    flex-shrink: 0;
+    display: flex; align-items: center;
+    padding: 1rem 0.5rem 0.5rem; gap: 0.25rem; flex-shrink: 0;
   }
-  .header-centre {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.25rem;
-  }
-  .header-date {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--cream);
-    margin: 0;
-    text-align: center;
-    letter-spacing: -0.01em;
-  }
+  .header-centre { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 0.25rem; }
+  .header-date { font-size: 1rem; font-weight: 600; color: var(--cream); margin: 0; text-align: center; letter-spacing: -.01em; }
   .today-chip {
-    background: var(--gold-dim);
-    border: 1px solid rgba(200,146,42,.3);
-    border-radius: 999px;
-    color: var(--gold-lt);
-    font-size: 0.68rem;
-    font-weight: 600;
-    padding: 0.2rem 0.65rem;
-    cursor: pointer;
-    font-family: 'Sora', system-ui, sans-serif;
+    background: var(--gold-dim); border: 1px solid rgba(200,146,42,.3); border-radius: 999px;
+    color: var(--gold-lt); font-size: .68rem; font-weight: 600; padding: .2rem .65rem;
+    cursor: pointer; font-family: 'Sora',system-ui,sans-serif;
   }
   .arrow-btn {
-    width: 36px; height: 36px;
-    display: flex; align-items: center; justify-content: center;
-    background: none; border: none;
-    color: rgba(237,229,216,.45);
-    cursor: pointer; border-radius: 10px;
-    transition: color .15s, background .15s;
-    flex-shrink: 0;
+    width: 36px; height: 36px; display: flex; align-items: center; justify-content: center;
+    background: none; border: none; color: rgba(237,229,216,.45); cursor: pointer;
+    border-radius: 10px; transition: color .15s,background .15s; flex-shrink: 0;
   }
   .arrow-btn svg { width: 20px; height: 20px; }
   .arrow-btn:hover { color: var(--cream); background: rgba(237,229,216,.06); }
 
   /* ── Week strip ── */
-  .week-strip {
-    display: flex;
-    justify-content: space-around;
-    padding: 0 0.75rem 0.5rem;
-    flex-shrink: 0;
-  }
+  .week-strip { display: flex; justify-content: space-around; padding: 0 .75rem .5rem; flex-shrink: 0; }
   .week-day {
     display: flex; flex-direction: column; align-items: center; gap: 3px;
     background: none; border: none; cursor: pointer;
-    padding: 0.3rem 0.5rem; border-radius: 10px;
-    font-family: 'Sora', system-ui, sans-serif;
-    font-size: 0.7rem; font-weight: 500;
-    color: rgba(237,229,216,.35);
-    transition: color .15s, background .15s;
-    min-width: 36px;
+    padding: .3rem .5rem; border-radius: 10px;
+    font-family: 'Sora',system-ui,sans-serif; font-size: .7rem; font-weight: 500;
+    color: rgba(237,229,216,.35); transition: color .15s,background .15s; min-width: 36px;
   }
   .week-day:hover { color: var(--cream); background: rgba(237,229,216,.06); }
   .week-day.active { color: var(--gold); background: var(--gold-dim); }
   .wd-label { line-height: 1; }
   .wd-dot-wrap { height: 5px; display: flex; align-items: center; justify-content: center; }
-  .wd-today-dot {
-    width: 4px; height: 4px; border-radius: 50%;
-    background: var(--sage);
-  }
+  .wd-today-dot { width: 4px; height: 4px; border-radius: 50%; background: var(--sage); }
   .week-day.active .wd-today-dot { background: var(--gold); }
 
-  /* ── Calendar outer (swipe container) ── */
+  /* ── Swipe outer ── */
   .cal-outer {
-    flex: 1;
-    min-height: 0;
-    overflow: hidden;
-    position: relative;
-    cursor: grab;
-    user-select: none;
+    flex: 1; min-height: 0; overflow: hidden; position: relative;
+    cursor: grab; user-select: none;
   }
   .cal-outer:active { cursor: grabbing; }
-
-  /* ── Calendar slide (scrollable) ── */
   .cal-slide {
-    height: 100%;
-    overflow-y: auto;
-    overflow-x: hidden;
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-y;
-    will-change: transform;
-    /* Space for the fixed bottom nav */
-    padding-bottom: 90px;
+    height: 100%; overflow-y: auto; overflow-x: hidden;
+    -webkit-overflow-scrolling: touch; touch-action: pan-y;
+    will-change: transform; padding-bottom: 90px;
   }
   .cal-slide::-webkit-scrollbar { width: 3px; }
   .cal-slide::-webkit-scrollbar-track { background: transparent; }
   .cal-slide::-webkit-scrollbar-thumb { background: rgba(237,229,216,.1); border-radius: 3px; }
 
   /* ── Time grid ── */
-  .time-grid {
-    position: relative;
-    padding-left: 52px;
-    padding-right: 8px;
-    padding-top: 8px;
-  }
-
+  .time-grid { position: relative; padding-left: 52px; padding-right: 8px; padding-top: 8px; }
   .hour-row {
-    position: absolute;
-    left: 0;
-    right: 8px;
-    display: flex;
-    align-items: flex-start;
-    pointer-events: none;
+    position: absolute; left: 0; right: 8px;
+    display: flex; align-items: flex-start; pointer-events: none;
   }
   .hour-lbl {
-    width: 44px;
-    text-align: right;
-    padding-right: 8px;
-    font-size: 0.67rem;
-    color: rgba(237,229,216,.28);
-    line-height: 1;
-    transform: translateY(-7px);
-    flex-shrink: 0;
+    width: 44px; text-align: right; padding-right: 8px;
+    font-size: .67rem; color: rgba(237,229,216,.28);
+    line-height: 1; transform: translateY(-7px); flex-shrink: 0;
   }
-  .hour-line {
-    flex: 1;
-    height: 1px;
-    background: rgba(237,229,216,.06);
-    align-self: center;
-  }
+  .hour-line { flex: 1; height: 1px; background: rgba(237,229,216,.06); align-self: center; }
 
-  /* ── Now indicator ── */
+  /* ── Now line ── */
   .now-line {
-    position: absolute;
-    left: 52px;
-    right: 8px;
-    display: flex;
-    align-items: center;
-    z-index: 3;
-    pointer-events: none;
+    position: absolute; left: 52px; right: 8px;
+    display: flex; align-items: center; z-index: 3; pointer-events: none;
   }
-  .now-dot {
-    width: 9px; height: 9px;
-    border-radius: 50%;
-    background: #ef4444;
-    margin-left: -5px;
-    flex-shrink: 0;
-  }
-  .now-bar {
-    flex: 1;
-    height: 1.5px;
-    background: #ef4444;
-  }
+  .now-dot { width: 9px; height: 9px; border-radius: 50%; background: #ef4444; margin-left: -5px; flex-shrink: 0; }
+  .now-bar { flex: 1; height: 1.5px; background: #ef4444; }
 
   /* ── Event blocks ── */
   .event-block {
     position: absolute;
-    left: 56px;
-    right: 8px;
-    border-radius: 8px;
-    border-left: 3px solid;
-    padding: 6px 9px 4px;
-    overflow: hidden;
-    cursor: pointer;
-    transition: filter .15s;
+    border-radius: 8px; border-left: 3px solid;
+    padding: 6px 8px 4px; overflow: hidden;
+    cursor: pointer; transition: filter .15s, box-shadow .15s;
     z-index: 2;
   }
-  .event-block:hover { filter: brightness(1.15); }
-  .event-block.event-short { padding: 4px 8px; }
+  .event-block:hover {
+    filter: brightness(1.18);
+    box-shadow: 0 2px 12px rgba(0,0,0,.35);
+    z-index: 4;
+  }
+  .event-block.event-short { padding: 3px 7px; }
 
   .ev-title {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--cream);
-    margin: 0;
-    line-height: 1.3;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
+    font-size: .79rem; font-weight: 600; color: var(--cream); margin: 0;
+    line-height: 1.3; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
   }
-  .event-short .ev-title {
-    font-size: 0.74rem;
-    -webkit-line-clamp: 1;
-  }
-  .ev-meta {
-    font-size: 0.7rem;
-    color: rgba(237,229,216,.55);
-    margin: 3px 0 0;
-  }
+  .event-short .ev-title { font-size: .72rem; -webkit-line-clamp: 1; }
+  .ev-meta { font-size: .68rem; margin: 2px 0 0; font-weight: 500; }
 
   /* ── Empty state ── */
   .empty-day {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 55vh;
-    gap: 0.6rem;
-    padding: 2rem 1.5rem 6rem;
-    text-align: center;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 55vh; gap: .6rem; padding: 2rem 1.5rem 6rem; text-align: center;
   }
-  .empty-moon {
-    font-size: 3rem;
-    line-height: 1;
-    opacity: 0.55;
-    margin-bottom: 0.25rem;
-  }
-  .empty-title {
-    font-size: 1rem;
-    font-weight: 600;
-    color: var(--cream);
-    margin: 0;
-  }
-  .empty-sub {
-    font-size: 0.82rem;
-    color: rgba(237,229,216,.4);
-    margin: 0;
-  }
-  .empty-days {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    justify-content: center;
-    margin-top: 0.75rem;
-  }
+  .empty-moon { font-size: 3rem; line-height: 1; opacity: .55; margin-bottom: .25rem; }
+  .empty-title { font-size: 1rem; font-weight: 600; color: var(--cream); margin: 0; }
+  .empty-sub { font-size: .82rem; color: rgba(237,229,216,.4); margin: 0; }
+  .empty-days { display: flex; flex-wrap: wrap; gap: .4rem; justify-content: center; margin-top: .75rem; }
   .empty-day-chip {
-    display: flex; align-items: center; gap: 0.3rem;
-    background: var(--ink-1);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    color: var(--cream);
-    font-size: 0.78rem; font-weight: 500;
-    padding: 0.35rem 0.75rem;
-    cursor: pointer; font-family: 'Sora', system-ui, sans-serif;
-    transition: border-color .15s, background .15s;
+    display: flex; align-items: center; gap: .3rem;
+    background: var(--ink-1); border: 1px solid var(--border); border-radius: 999px;
+    color: var(--cream); font-size: .78rem; font-weight: 500; padding: .35rem .75rem;
+    cursor: pointer; font-family: 'Sora',system-ui,sans-serif; transition: border-color .15s,background .15s;
   }
   .empty-day-chip:hover { background: var(--ink-2); border-color: rgba(237,229,216,.2); }
-  .chip-count {
-    background: var(--gold-dim);
-    color: var(--gold-lt);
-    font-size: 0.68rem; font-weight: 600;
-    border-radius: 999px;
-    padding: 0 5px;
-  }
+  .chip-count { background: var(--gold-dim); color: var(--gold-lt); font-size: .68rem; font-weight: 600; border-radius: 999px; padding: 0 5px; }
 
-  /* ── Loading skeleton ── */
+  /* ── Skeleton ── */
   .skel-wrap { position: relative; height: 480px; }
-  .skel-event {
-    position: absolute;
-    left: 56px; right: 8px;
-    border-radius: 8px;
-    background: rgba(237,229,216,.05);
-    animation: pulse 1.4s ease-in-out infinite;
-  }
+  .skel-event { position: absolute; left: 56px; right: 8px; border-radius: 8px; background: rgba(237,229,216,.05); animation: pulse 1.4s ease-in-out infinite; }
   .skel-axis { position: absolute; left: 0; right: 0; top: 0; }
-  .skel-hour {
-    position: absolute;
-    left: 52px; right: 8px; height: 1px;
+  .skel-hour { position: absolute; left: 52px; right: 8px; height: 1px; background: rgba(237,229,216,.05); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:.4 } 50% { opacity:.75 } }
+
+  /* ── Session detail sheet ── */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(7,16,28,.75);
+    display: flex; align-items: flex-end; z-index: 200;
+    -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  }
+  .sheet {
+    width: 100%; max-height: 92dvh; background: var(--ink-1);
+    border-radius: 20px 20px 0 0; border-top: 1px solid rgba(237,229,216,.08);
+    display: flex; flex-direction: column; overflow: hidden;
+    animation: slideUp .28s cubic-bezier(.25,1,.5,1);
+  }
+  @keyframes slideUp { from { transform: translateY(100%) } to { transform: translateY(0) } }
+
+  .sheet-handle {
+    width: 36px; height: 4px; border-radius: 2px;
+    background: rgba(237,229,216,.2); margin: 10px auto 0; flex-shrink: 0;
+  }
+  .sheet-close {
+    position: absolute; top: 16px; right: 16px;
+    width: 32px; height: 32px; border-radius: 50%;
+    background: rgba(237,229,216,.08); border: none;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(237,229,216,.6); cursor: pointer; transition: background .15s;
+  }
+  .sheet-close:hover { background: rgba(237,229,216,.15); }
+  .sheet-close svg { width: 14px; height: 14px; }
+
+  .sheet-header {
+    padding: 1.25rem 1.25rem 1rem;
+    border-bottom: 1px solid rgba(237,229,216,.06);
+    flex-shrink: 0;
+  }
+  .cat-tag {
+    display: inline-block; font-size: .68rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .06em;
+    color: var(--cat); background: color-mix(in srgb, var(--cat) 15%, transparent);
+    border-radius: 6px; padding: .2rem .55rem; margin-bottom: .6rem;
+  }
+  .sheet-title { font-size: 1.15rem; font-weight: 600; color: var(--cream); margin: 0 0 .3rem; line-height: 1.3; }
+  .sheet-lecturer { font-size: .85rem; color: var(--sage); margin: 0; }
+
+  .sheet-body { overflow-y: auto; padding: 1rem 1.25rem 2rem; display: flex; flex-direction: column; gap: 1rem; }
+
+  .sheet-summary { font-size: .875rem; color: rgba(237,229,216,.7); line-height: 1.6; margin: 0; }
+
+  .detail-grid { display: flex; flex-direction: column; gap: .5rem; }
+  .detail-row { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
+  .detail-label { font-size: .75rem; color: rgba(237,229,216,.4); font-weight: 500; flex-shrink: 0; }
+  .detail-val { font-size: .85rem; color: var(--cream); text-align: right; }
+
+  .join-section { display: flex; flex-direction: column; gap: .5rem; }
+  .join-label { font-size: .75rem; font-weight: 600; color: rgba(237,229,216,.4); text-transform: uppercase; letter-spacing: .06em; margin: 0; }
+  .join-links { display: flex; flex-direction: column; gap: .4rem; }
+  .join-btn {
+    display: block; padding: .7rem 1rem; border-radius: 10px;
+    background: color-mix(in srgb, var(--cat) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--cat) 30%, transparent);
+    color: var(--cream); font-size: .85rem; font-weight: 500;
+    text-decoration: none; transition: background .15s;
+  }
+  .join-btn:hover { background: color-mix(in srgb, var(--cat) 22%, transparent); }
+
+  .save-btn-full {
+    display: flex; align-items: center; justify-content: center; gap: .5rem;
+    width: 100%; padding: .85rem; border-radius: 12px;
+    border: 1px solid rgba(237,229,216,.12);
     background: rgba(237,229,216,.05);
-    animation: pulse 1.4s ease-in-out infinite;
+    color: rgba(237,229,216,.6);
+    font-size: .9rem; font-weight: 600;
+    font-family: 'Sora',system-ui,sans-serif;
+    cursor: pointer; transition: background .15s, color .15s, border-color .15s;
   }
-  @keyframes pulse {
-    0%, 100% { opacity: .4; }
-    50%       { opacity: .75; }
+  .save-btn-full svg { width: 18px; height: 18px; }
+  .save-btn-full.saved {
+    background: color-mix(in srgb, var(--cat) 15%, transparent);
+    border-color: color-mix(in srgb, var(--cat) 40%, transparent);
+    color: var(--cat);
   }
+  .save-btn-full:not(.saved):hover { background: rgba(237,229,216,.1); color: var(--cream); }
 </style>
